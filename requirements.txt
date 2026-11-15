@@ -1,0 +1,14 @@
+# 서버 (python 3.11+)
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+python-multipart>=0.0.9
+pillow>=10.0
+requests>=2.31
+httpx>=0.27
+# 형제 저장소 (나란히 clone): doc_reader는 pip install -e ../doc_reader, basic_agent는 경로만 (선택, 로컬 LLM)
+# 테스트·점검·도구 (선택)
+pytest>=8.0
+playwright>=1.44
+pandas>=2.0
+xlrd>=2.0

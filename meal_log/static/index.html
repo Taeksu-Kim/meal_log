@@ -1,0 +1,1764 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>식단 기록 · meal_log</title>
+<link rel="icon" href="data:,">
+<style>
+  /* 색·컴포넌트는 card_spending과 같은 체계. 이 화면만의 표시는 하나: 날짜 칸 = 식판 (끼니 다섯 줄이 모든 칸에서 같은 높이) */
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #677085; --line: #e3e6ec; --hover: #f1f4f9;
+    --accent: #2f6fde; --accent-soft: #e6eefc; --ok: #1f8a5b; --ok-soft: #e3f4ec; --warn: #b76e00; --warn-soft: #fdf1dc;
+    --danger: #c03b3b; --shadow: 0 8px 28px rgba(20, 30, 50, .18);
+    --faint: #c5cad5;
+    --r: 8px; --r-sm: 6px;
+    --fs-cap: 12px; --fs-body: 14px; --fs-title: 15px; --fs-big: 17px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e4e7ee; --muted: #9aa3b5; --line: #2c323e; --hover: #232936;
+      --accent: #6c9cf0; --accent-soft: #1f2b44; --ok: #4cc28c; --ok-soft: #173326; --warn: #e2a64a; --warn-soft: #3a2c14;
+      --danger: #ef6b6b; --shadow: 0 8px 28px rgba(0, 0, 0, .5); --faint: #3b4252;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); word-break: keep-all; overflow-wrap: anywhere;
+         font: var(--fs-body)/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; }
+  ::selection { background: var(--accent-soft); }
+  header { padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+           display: flex; gap: 8px 16px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: var(--fs-big); margin: 0 8px 0 0; }
+  h2 { font-size: var(--fs-title); margin: 0; }
+  main { max-width: 1320px; margin: 0 auto; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  .muted { color: var(--muted); }
+  .cap { font-size: var(--fs-cap); }
+  .err { color: var(--danger); }
+  .num { font-variant-numeric: tabular-nums; }
+  button, select, input { font: inherit; color: inherit; }
+  button { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-sm); padding: 5px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+  button.link { border: 0; background: none; padding: 2px 4px; color: var(--accent); }
+  button.link:hover:not(:disabled) { background: var(--accent-soft); }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  select, input[type=date], input[type=text], input[type=time], input[type=number], input[type=search] {
+    border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-sm); padding: 4px 8px; }
+  input[type=number] { width: 90px; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
+  .b-warn { background: var(--warn-soft); color: var(--warn); }
+  .b-info { background: var(--accent-soft); color: var(--accent); }
+  .b-mute { background: var(--hover); color: var(--muted); }
+  code { font: 12px ui-monospace, monospace; background: var(--hover); padding: 1px 4px; border-radius: 4px; }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .skel { background: var(--hover); border-radius: var(--r); }
+
+  /* 머리글: 가져오기 상태 · 확인할 끼니 · 설정 */
+  #syncState { display: inline-flex; gap: 6px; align-items: center; }
+  #reviewChip { border-color: var(--warn); color: var(--warn); background: var(--warn-soft); font-weight: 600; }
+  #reviewChip.none { border-color: var(--line); color: var(--muted); background: var(--panel); font-weight: 400; }
+  #status:empty { display: none; }
+  #status .msg { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: var(--r);
+                 background: var(--accent-soft); }
+  #status .msg.error { background: var(--warn-soft); }
+  #status .msg.error b { color: var(--danger); }
+
+  /* 본문 배치: 캘린더 + 고른 날 (넓으면 옆, 좁으면 아래) */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px; align-items: start; }
+  #dayPanel { position: sticky; top: 10px; max-height: calc(100vh - 20px); overflow: auto; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } #dayPanel { position: static; max-height: none; } }
+
+  .calbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .calbar .month { font-size: var(--fs-title); font-weight: 600; min-width: 104px; text-align: center; }
+  #weekLine { margin: 0 0 10px; padding: 6px 10px; border-radius: var(--r-sm); background: var(--hover); }
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+  .cal .dow { font-size: var(--fs-cap); color: var(--muted); text-align: center; }
+  .cal .dow.sun { color: var(--danger); }
+  .cal .empty { grid-column: 1 / -1; padding: 16px 24px 20px; margin-bottom: 6px; text-align: center; border-radius: var(--r);
+                background: var(--hover); }
+  td.wrap { white-space: normal; }
+
+  /* 식판 칸 */
+  .day { border: 1px solid var(--line); border-radius: var(--r); padding: 4px 5px 5px; background: var(--panel);
+         text-align: left; display: flex; flex-direction: column; gap: 3px; cursor: pointer; min-width: 0; }
+  .day:hover { background: var(--hover); }
+  .day.out { visibility: hidden; }
+  .day.today .dnum { color: var(--accent); }
+  #cal[aria-busy=true] .day { opacity: .45; }
+  .day.touched { box-shadow: inset 0 0 0 2px var(--ok); }
+  .day.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .day .top { display: flex; justify-content: space-between; gap: 4px; font-size: var(--fs-cap); }
+  .day .dnum { font-weight: 600; }
+  .day .kc { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tray { display: grid; grid-template-columns: minmax(0, 1fr); border-top: 1px solid var(--line); }
+  .tray .r { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 3px; font-size: var(--fs-cap); line-height: 17px;
+             border-bottom: 1px solid var(--line); }
+  .tray .r:last-child { border-bottom: 0; }
+  .tray .k { color: var(--muted); }
+  .tray .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tray .r.none .k { color: var(--faint); }
+  .tray .r.review .v { color: var(--warn); font-weight: 600; }
+  .tray .r.unknown .v, .tray .r.skip .v { color: var(--muted); }
+  .day .extra { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .legend .sw { display: inline-block; width: 22px; height: 6px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+  .sw.ok, .bar.ok { background: var(--ok); }
+  .sw.review, .bar.review { background: var(--warn-soft); box-shadow: inset 0 0 0 2px var(--warn); }
+  .sw.unknown, .bar.unknown { background: repeating-linear-gradient(90deg, var(--muted) 0 3px, transparent 3px 5px); }
+  .sw.skip, .bar.skip { box-shadow: inset 0 0 0 1px var(--muted); }
+  .sw.none, .bar.none { background: var(--line); }
+  .bars { display: none; }
+  @media (max-width: 640px) {   /* 좁으면 메뉴 글자 대신 끼니 다섯 줄을 막대로 (색 + 모양으로 구분) */
+    .tray, .day .kc, .day .extra { display: none; }
+    .bars { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    .bar { height: 5px; border-radius: 3px; }
+    .day { padding: 3px; }
+    main { padding: 10px; }
+    .panel { padding: 10px; }
+  }
+
+  /* 채팅 입력 */
+  .chatbar { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .chatbar input[type=text] { width: 100%; padding: 6px 10px; }
+  @media (max-width: 640px) { .chatbar { grid-template-columns: auto minmax(0, 1fr) auto; } .chatbar label { grid-column: 1 / -1; } }
+  #chatPreview:empty { display: none; }
+  #chatPreview { margin-top: 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .chatpv-ent { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 10px;
+                border: 1px solid var(--line); border-radius: var(--r); }
+  .chatpv-ent .when { font-weight: 600; white-space: nowrap; }
+  .chatpv-ent .chip input[type=number] { width: 64px; padding: 1px 4px; }
+  .chatpv-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .chatbar { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+  #chatPanel.drag { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  #capArea:empty { display: none; }
+  #capArea { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .capcard { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; padding: 10px; border: 1px solid var(--line);
+             border-radius: var(--r); }
+  .capcard img { width: 120px; max-height: 220px; object-fit: cover; object-position: top; border: 1px solid var(--line);
+                 border-radius: var(--r-sm); cursor: zoom-in; }
+  .capcard .body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }   /* 열 폭 고정 안 하면 내용 폭으로 늘어남 */
+  .capcard select, .chatpv-ent select, .capcard .row > * { max-width: 100%; min-width: 0; }
+  .capcard input[type=text] { min-width: 0; width: 220px; max-width: 100%; flex: 1 1 140px; }
+  .capcard.focus { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .capcard pre { white-space: pre-wrap; font: 12px ui-monospace, monospace; margin: 4px 0 0; padding: 6px 8px; background: var(--hover);
+                 border-radius: var(--r-sm); max-height: 200px; overflow: auto; }
+  .chip .nm { border: 0; background: none; padding: 0; color: inherit; text-decoration: underline dotted; }
+  @media (max-width: 640px) { .chatbar { grid-template-columns: auto minmax(0, 1fr) auto; } .capcard { grid-template-columns: 72px minmax(0, 1fr); }
+                              .capcard img { width: 72px; } }
+
+  /* 고른 날 */
+  .slot { padding: 10px 0; border-top: 1px solid var(--line); }
+  .slot:first-of-type { border-top: 0; }
+  .slot > .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+  .entry { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 6px 0; }
+  .entry + .entry { border-top: 1px dashed var(--line); }
+  .entry.excluded .place { text-decoration: line-through; color: var(--muted); }
+  .entry .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+  .entry .place { font-weight: 600; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .chip { display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px 6px; align-items: center; border: 1px solid var(--line);
+          border-radius: var(--r-sm); padding: 1px 2px 1px 8px; }   /* 좁으면 칩 안에서도 줄바꿈 (390폭 가로 넘침, 2026-11-15) */
+  .chip .x { border: 0; background: none; padding: 0 6px; color: var(--muted); }
+  /* 경험 기억 제안: 지난번 같은 결제로 확정한 메뉴 (제안만 -- 사람이 [넣기]) */
+  .sugg { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: center; padding: 4px 4px 4px 8px;
+          border-radius: var(--r-sm); background: var(--accent-soft); }
+  .sugg .what { font-weight: 600; }
+  .sugg .why { color: var(--accent); font-size: var(--fs-cap); }
+  .sugg .acts { display: flex; gap: 2px; }
+  .entry .ctl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: var(--fs-cap); }
+  .entry .ctl select { padding: 2px 4px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; overflow-wrap: normal; }
+  th { font-size: var(--fs-cap); color: var(--muted); font-weight: 600; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tablewrap { overflow: auto; }
+  .form { display: grid; grid-template-columns: max-content auto; gap: 8px 12px; align-items: center; }
+  .winrow { display: inline-flex; gap: 6px; align-items: center; }
+
+  /* 떠 있는 상자: 메뉴 검색창(card_spending 범주 선택창과 같은 조작) · kcal 정하기 */
+  .popover { position: absolute; z-index: 10; max-width: calc(100vw - 16px); background: var(--panel);
+             border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 8px; display: none; }
+  .popover.open { display: block; }
+  #picker { width: 320px; }
+  #kcalBox { width: 360px; padding: 12px; }
+  #kcalBox .form { grid-template-columns: max-content minmax(0, 1fr); margin: 8px 0; }
+  #kcalBox input[type=number] { width: 76px; }
+  #kBasis:empty { display: none; }
+  #kBasis { margin: 4px 0 8px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--accent-soft); }
+  /* 구성으로 추정: 이름을 풀어 줄별 근거와 함께 (compose.py) */
+  #kCompose:empty { display: none; }
+  #kCompose { margin: 4px 0 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r-sm); }
+  #kCompose .head { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+  #kCompose .parts { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 1px 8px; margin-top: 4px; }
+  #kCompose .parts .d { color: var(--muted); }
+  #picker input { width: 100%; }
+  #pickList { list-style: none; margin: 6px 0 0; padding: 0; max-height: 300px; overflow: auto; }
+  #pickList li { padding: 5px 8px; border-radius: var(--r-sm); cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  #pickList li .meta { color: var(--muted); font-size: var(--fs-cap); white-space: nowrap; }
+  #pickList li.active { background: var(--accent-soft); color: var(--accent); }
+  #pickList li.active .meta { color: inherit; }
+  #pickHint { margin-top: 6px; }
+  /* 오른쪽 칸 탭 · 대화 */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 10px; }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
+  .tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tabs .dot { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--accent); margin-left: 4px; vertical-align: middle; }
+  .convbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+  .convbar select { min-width: 0; width: 100%; }
+  .choices { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .choice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: start; text-align: left; padding: 8px 10px; }
+  .choice[aria-checked=true] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+  .choice .mark { grid-row: 1 / 3; margin-top: 2px; width: 14px; height: 14px; border-radius: 7px; border: 2px solid var(--muted); }
+  .choice[aria-checked=true] .mark { border-color: var(--accent); background: radial-gradient(var(--accent) 0 3px, transparent 4px); }
+  .choice .why { color: var(--muted); font-size: var(--fs-cap); }
+  .choice.sends .why { color: var(--warn); }
+  .choice:disabled .why { color: var(--danger); }
+  #convHead { margin: 8px 0 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  #convHead:empty { display: none; }
+  .b-claude { background: var(--warn-soft); color: var(--warn); }
+  #msgs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 4px 0; max-height: 52vh; overflow: auto; }
+  #msgs:empty { display: none; }
+  @media (max-width: 1100px) { #msgs { max-height: none; } }
+  .msg-u, .msg-a { padding: 7px 10px; border-radius: 10px; white-space: pre-wrap; max-width: 92%; }
+  .msg-u { justify-self: end; background: var(--accent-soft); }
+  .msg-a { justify-self: start; border: 1px solid var(--line); }
+  .msg-a.fail { border-color: var(--danger); }
+  .msg-a .cursor::after { content: "▍"; color: var(--muted); }
+  .toolcard { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; margin: 2px 0; padding: 4px 8px; border-radius: var(--r-sm);
+              background: var(--hover); font-size: var(--fs-cap); white-space: normal; }
+  .toolcard.bad { background: var(--warn-soft); color: var(--warn); }
+  .toolcard.run { color: var(--muted); }
+  .msg-a .foot { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .convempty { padding: 14px 8px; text-align: center; }
+  .askbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: end; margin-top: 8px; }
+  .askbar textarea { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm);
+                     padding: 6px 8px; resize: vertical; min-height: 40px; width: 100%; }
+  .askbar #askStop { grid-column: 2; }
+  @media (prefers-reduced-motion: no-preference) { button, .day { transition: background-color .15s; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>식단 기록</h1>
+  <span id="syncState" class="cap muted"></span>
+  <button id="syncBtn" class="link cap">다시 가져오기</button>
+  <button id="reviewChip" class="none" hidden></button>
+  <button id="buryBtn" class="link cap" hidden></button>
+  <span class="grow"></span>
+  <button id="settingsBtn" aria-expanded="false" aria-controls="settingsPanel">설정</button>
+</header>
+
+<main>
+  <div id="status" aria-live="polite"></div>
+
+  <section class="panel" id="settingsPanel" hidden>
+    <div class="row" style="margin-bottom:10px"><h2>설정</h2><span class="grow"></span><button id="settingsClose" class="link">닫기</button></div>
+    <div class="form">
+      <span class="cap muted">끼니 시간대</span>
+      <div id="winRows" class="row"></div>
+      <label for="snackMin" class="cap muted">카페·편의점</label>
+      <div class="row cap"><input type="number" id="snackMin" min="0" max="1000000" step="1000"><span>원 이상이면 간식이 아니라 그 시간대 끼니로</span></div>
+      <label for="sinceInput" class="cap muted">정리 기준일</label>
+      <div class="row cap"><input type="date" id="sinceInput"><span class="muted">이 날짜 이전에 메뉴를 모르는 끼니는 확인 목록에 띄우지 않고 "모름"으로 둡니다. 비우면 전부 확인 대상.</span></div>
+      <label for="warnInput" class="cap muted">쌓임 알림</label>
+      <div class="row cap"><input type="number" id="warnInput" min="1" max="1000"><span>끼보다 많이 쌓이면 "이전은 모름으로 두기"를 제안</span></div>
+    </div>
+    <p class="cap muted">어느 시간대에도 없으면 간식입니다. 아침 시작 시각보다 이른 결제는 전날 기록입니다 (자정 넘은 야식 → 전날 야식).
+      시간대를 바꾸면 직접 옮기지 않은 카드 끼니를 새 시간대로 다시 나눕니다.</p>
+    <div class="row"><button class="primary" id="setSave">설정 저장</button><button id="setDefault">기본값 채우기</button><span class="cap" id="setMsg"></span></div>
+    <h2 style="margin-top:16px">내 메뉴 <span class="cap muted" style="font-weight:400">기준표에 없어 직접 정한 kcal</span></h2>
+    <div class="tablewrap"><table><thead><tr><th>메뉴</th><th>단위</th><th class="n">kcal (낮음–높음 / 보통)</th><th>출처</th><th></th></tr></thead>
+      <tbody id="myMenus"></tbody></table></div>
+  </section>
+
+  <section class="panel" id="chatPanel">
+    <div class="chatbar">
+      <label for="chatInput" class="cap muted">먹은 것 적기</label>
+      <input type="date" id="chatDate" aria-label="날짜를 말하지 않았을 때 넣을 날 (기본 오늘)" title="문장에 날짜가 없으면 이 날로 넣습니다">
+      <input type="text" id="chatInput" maxlength="300" autocomplete="off"
+             placeholder="예: 아침에 고구마 1개 · 어제 저녁 배달은 치킨 반 마리" aria-describedby="chatHelp">
+      <button class="primary" id="chatGo">해석</button>
+      <button id="capBtn" title="배달앱 영수증 화면 캡처, 종이 영수증 사진 (여러 장 가능, 이 창에 끌어다 놓아도 됨)">영수증·캡처 올리기</button>
+      <input type="file" id="capFile" accept="image/*" multiple hidden>
+    </div>
+    <div id="chatHelp" class="cap muted" style="margin-top:4px">넣기 전에 해석 결과를 보여 드립니다. 같은 날 메뉴를 모르는 카드 결제가 있으면 그 결제에 채웁니다.</div>
+    <div id="chatPreview" aria-live="polite"></div>
+    <div id="capArea" aria-live="polite"></div>
+  </section>
+
+  <div class="layout">
+    <section class="panel" id="calPanel">
+      <div class="calbar">
+        <button id="prevMonth">◀ 이전 달</button>
+        <span class="month" id="monthLabel"></span>
+        <button id="nextMonth">다음 달 ▶</button>
+        <button id="todayBtn" class="link">오늘</button>
+      </div>
+      <div id="weekLine" class="cap"></div>
+      <div class="cal" id="cal"></div>
+      <div class="legend cap muted">
+        <span>줄 = 아침·점심·저녁·간식·야식</span>
+        <span><span class="sw ok"></span>먹음</span>
+        <span><span class="sw review"></span>? 확인 필요</span>
+        <span><span class="sw unknown"></span>메뉴 모름</span>
+        <span><span class="sw skip"></span>건너뜀</span>
+        <span>kcal = 1인 추정 보통값 · <b>+?</b> = 모르는 끼니가 더 있음 (최소 이만큼)</span>
+      </div>
+    </section>
+
+    <aside class="panel" id="dayPanel">
+      <div class="tabs" role="tablist" aria-label="오른쪽 칸">
+        <button role="tab" id="tabDay" aria-controls="dayView" aria-selected="true">고른 날</button>
+        <button role="tab" id="tabConv" aria-controls="convView" aria-selected="false" tabindex="-1">대화</button>
+      </div>
+      <div id="dayView" role="tabpanel" aria-labelledby="tabDay">
+        <div class="row"><h2 id="dayTitle">날짜를 고르세요</h2><span class="grow"></span></div>
+        <div id="dayTotal" class="cap muted" style="margin-top:2px"></div>
+        <div id="dayBody" style="margin-top:6px"></div>
+      </div>
+      <div id="convView" role="tabpanel" aria-labelledby="tabConv" hidden>
+        <div class="convbar">
+          <select id="convSel" aria-label="대화 고르기"></select>
+          <button id="convNewBtn">새 대화</button>
+          <button id="convDel" class="link danger cap" title="이 대화 지우기 (식단 기록은 그대로)">지우기</button>
+        </div>
+        <div id="convNew" hidden>
+          <div class="cap muted" style="margin:8px 0 6px">어느 세션으로 대화할까요? 만든 뒤에는 바꿀 수 없습니다.</div>
+          <div id="convChoices" class="choices" role="radiogroup" aria-label="대화 세션"></div>
+          <div class="row" style="margin-top:8px"><button class="primary" id="convCreate">시작</button><button id="convCancel">취소</button>
+            <span id="convNewMsg" class="cap"></span></div>
+        </div>
+        <div id="convHead" class="cap muted"></div>
+        <div id="msgs" aria-live="polite"></div>
+        <div class="askbar">
+          <textarea id="askInput" rows="2" maxlength="2000" placeholder="예: 어제 저녁 배달은 치킨 반 마리였어 · 이번 주 야식 몇 번 먹었지?"
+                    aria-label="도우미에게 말하기"></textarea>
+          <button class="primary" id="askGo">보내기</button>
+          <button id="askStop" hidden>멈추기</button>
+        </div>
+        <div class="cap muted" style="margin-top:4px"><kbd>Enter</kbd> 보내기 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈 · 도우미가 기록·수정하면 캘린더에 바로 반영됩니다</div>
+      </div>
+    </aside>
+  </div>
+
+  <section class="panel">
+    <div class="row" style="margin-bottom:8px"><h2>주별 추이</h2><span class="cap muted" id="weekNote"></span></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>주 (월요일)</th><th class="n">하루 평균 kcal</th><th class="n">범위</th><th class="n">kcal 다 아는 날</th><th class="n">일부만 아는 날</th>
+          <th class="n">끼니</th><th class="n">야식한 날</th><th class="n">배달</th><th class="n">외식</th><th class="n">kcal 모르는 끼니</th></tr></thead>
+        <tbody id="weekRows"></tbody>
+      </table>
+    </div>
+    <p class="cap muted" style="margin:8px 0 0">kcal는 1인분 추정치로 경향을 보는 용도입니다. "식약처" 표시가 붙은 메뉴는 식약처 음식 영양성분 DB의 외식 값, 나머지는 손으로 적은 근사값입니다.
+      하루 평균은 그날 끼니의 kcal를 모두 아는 날만으로 냅니다 (모르는 끼니가 섞인 날은 실제보다 낮아서 뺌).</p>
+  </section>
+</main>
+
+<div id="kcalBox" class="popover" role="dialog" aria-labelledby="kTitle">
+  <b id="kTitle"></b>
+  <div class="form">
+    <label for="kUnit" class="cap muted">단위</label>
+    <input type="text" id="kUnit" maxlength="20" placeholder="예: 1개, 1인분">
+    <label for="kLow" class="cap muted">kcal</label>
+    <div class="row cap"><input type="number" id="kLow" min="0" max="5000" aria-label="낮음"> – <input type="number" id="kHigh" min="0" max="5000" aria-label="높음">
+      <span class="muted">보통</span><input type="number" id="kMid" min="0" max="5000" placeholder="가운데" aria-label="보통 (비우면 가운데)"></div>
+  </div>
+  <div id="kBasis" class="cap"></div>
+  <div id="kCompose" class="cap"></div>
+  <div id="kSimilar" class="row cap"></div>
+  <div class="row"><button id="kEstimate" class="link">로컬 LLM에 추정 받기</button><span class="cap muted">메뉴 이름·단위만 보냄 · 5~10초</span></div>
+  <div class="row" style="margin-top:8px"><button class="primary" id="kSave">내 메뉴로 저장</button><button id="kCancel">취소</button>
+    <span id="kMsg" class="cap"></span></div>
+  <div class="cap muted" style="margin-top:6px">저장하면 이 메뉴가 들어간 모든 끼니에 kcal가 붙고, 다음부터 채팅·검색에서도 씁니다.</div>
+</div>
+
+<div id="picker" class="popover" role="dialog" aria-label="메뉴 검색">
+  <input type="search" id="pickInput" placeholder="예: 국밥, 치킨" autocomplete="off" aria-label="메뉴 검색"
+         role="combobox" aria-controls="pickList" aria-expanded="true">
+  <ul id="pickList" role="listbox"></ul>
+  <div id="pickHint" class="cap muted"><kbd>↑</kbd><kbd>↓</kbd> 이동 · <kbd>Enter</kbd> 선택 · <kbd>Esc</kbd> 닫기</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const won = new Intl.NumberFormat("ko-KR");
+const SLOTS = ["아침", "점심", "저녁", "간식", "야식"];
+const MOVE_SLOTS = [...SLOTS, "장보기"];
+const DOW = ["일", "월", "화", "수", "목", "금", "토"];
+// kcal 출처 설명 (칩에 마우스를 올리면). table = 손으로 적은 근사값, db = 식약처 음식 DB 외식 행, manual = 직접 넣음
+const KCAL_SOURCE = {
+  table: (k) => `기준표 근사값 (공식 자료와 대조 전) · ${k.unit || ""}`,
+  db: (k) => `식약처 음식 영양성분 DB 외식 ${k.db_rows}행의 1인분 값 · ${k.unit || ""}`,
+  user: (k) => `내 메뉴 · 내가 정한 값 · ${k.unit || ""}`,
+  llm: (k) => `내 메뉴 · 로컬 LLM 추정을 확정${k.basis ? ` (${k.basis})` : ""} · ${k.unit || ""}`,
+  label: (k) => `내 메뉴 · 포장지 영양정보${k.basis ? ` (${k.basis})` : ""} · ${k.unit || ""}`,
+  calc: (k) => `내 메뉴 · 이름을 풀어 계산${k.basis ? ` (${k.basis})` : ""} · ${k.unit || ""}`,
+  manual: () => "직접 넣은 kcal",
+};
+const STATE_WORD = { ok: "먹음", review: "확인 필요", unknown: "메뉴 모름", skip: "건너뜀", none: "기록 없음" };
+// 요청 번호: 같은 칸을 다시 불러오는 요청이 겹치면 마지막 요청의 응답만 그린다 (늦게 온 옛 응답이 화면을 덮지 않게)
+const seq = { review: 0, calendar: 0, day: 0, week: 0, weekly: 0 };
+// flow: "확인할 끼니 ▸"로 시작한 연속 확인 중 (해결하면 다음 끼니로 넘어감). 날짜를 직접 고르면 끝난다
+const state = { menus: [], month: null, day: null, lastDate: null, firstDate: null, review: null, settings: null, meals: 0, flow: false };
+
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null && c !== false) n.append(c);
+  return n;
+}
+// replaceChildren은 null을 글자 "null"로 붙인다 -- 조건부로 빠지는 칸이 있으면 이걸 쓴다
+function fill(node, ...kids) { node.replaceChildren(...kids.filter((k) => k != null && k !== false)); }
+
+async function api(path, opts = {}) {
+  if (opts.json !== undefined) {
+    opts = { ...opts, body: JSON.stringify(opts.json), headers: { "Content-Type": "application/json" } };
+    delete opts.json;
+  }
+  let r;
+  try { r = await fetch(path, opts); }
+  catch (_) { const e = new Error("meal_log 서버에 연결할 수 없습니다 (서버가 꺼졌을 수 있음)"); e.kind = "offline"; throw e; }
+  if (!r.ok) throw await apiError(r);
+  return r.json();
+}
+// 실패 응답 -> Error (서버의 {kind, message} 표식을 e.kind로). api()와 대화 스트림이 같이 쓴다
+async function apiError(r) {
+  let detail = r.statusText, kind = null;
+  try {
+    const d = (await r.json()).detail;
+    if (d && typeof d === "object" && !Array.isArray(d)) { detail = d.message; kind = d.kind; }
+    else if (Array.isArray(d)) detail = d.map((x) => x.msg).join("; ");
+    else if (d) detail = d;
+  } catch (_) {}
+  const e = new Error(detail);
+  e.kind = kind; e.status = r.status;
+  return e;
+}
+
+// ------------------------------------------------------------------ 날짜·글자
+const pad = (n) => String(n).padStart(2, "0");
+const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const today = () => isoDate(new Date());
+const parseIso = (iso) => new Date(iso + "T00:00:00");
+const addDays = (iso, n) => { const d = parseIso(iso); d.setDate(d.getDate() + n); return isoDate(d); };
+const dow = (iso) => DOW[parseIso(iso).getDay()];
+const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
+const kc = (v) => won.format(Math.round(v));
+const monthLabel = (m) => `${m.slice(0, 4)}년 ${Number(m.slice(5, 7))}월`;
+const syncTime = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))} ${iso.slice(11, 16)}`;
+function shiftMonth(m, delta) {
+  const d = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + delta, 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+// 받침이 있으면 "으로", 없거나 ㄹ 받침이면 "로"
+function ro(word) {
+  const c = word.charCodeAt(word.length - 1) - 0xac00;
+  if (c < 0 || c > 11171) return word + "(으)로";
+  const jong = c % 28;
+  return word + (jong === 0 || jong === 8 ? "로" : "으로");
+}
+const itemLabel = (it) => it.name + (it.qty && it.qty !== 1 ? ` ×${it.qty}` : "");
+
+// ------------------------------------------------------------------ 알림 줄 (되돌리기)
+let statusTimer = null;
+function say(text, { undo = null, error = false, sticky = false, extra = null, kind = "" } = {}) {
+  clearTimeout(statusTimer);
+  const parts = [error ? el("b", { text }) : el("span", { text })];
+  if (extra) parts.push(extra);
+  if (undo) {
+    const b = el("button", { class: "link", text: "되돌리기" });
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await undo(); }
+      catch (e) { say(`되돌리지 못했습니다: ${e.message}`, { error: true }); return; }
+      await refresh();
+      say("되돌렸습니다.");
+    };
+    parts.push(b);
+  }
+  const close = el("button", { class: "link", "aria-label": "알림 닫기", text: "닫기" });
+  close.onclick = () => fill($("status"));
+  $("status").dataset.kind = kind;
+  fill($("status"), el("div", { class: "msg" + (error ? " error" : "") }, ...parts, el("span", { class: "grow" }), close));
+  if (!sticky) statusTimer = setTimeout(() => fill($("status")), undo ? 15000 : 6000);
+}
+
+// ------------------------------------------------------------------ 메뉴 검색 선택창
+const picker = { matches: [], active: 0, onPick: null, anchor: null };
+function pickerMatches(query) {
+  const q = query.trim();
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = state.menus.filter((m) => terms.every((t) => m.name.toLowerCase().includes(t)))
+    .map((m) => ({ name: m.name, meta: `${m.unit} · ${kc(m.low)}–${kc(m.high)} kcal${m.source === "db" ? " · 식약처" : m.custom ? " · 내 메뉴" : ""}` }));
+  if (q && !state.menus.some((m) => m.name === q)) found.push({ name: q, meta: "표에 없음 · kcal 모름", free: true });
+  return found;
+}
+function renderPicker() {
+  const list = $("pickList");
+  list.replaceChildren();
+  picker.matches.forEach((m, i) => {
+    const li = el("li", { role: "option", id: `pick-${i}`, "aria-selected": String(i === picker.active) },
+      el("span", { text: m.free ? `“${m.name}” 그대로 넣기` : m.name }), el("span", { class: "meta", text: m.meta }));
+    if (i === picker.active) li.classList.add("active");
+    li.onmousedown = (e) => { e.preventDefault(); choose(m.name); };
+    list.append(li);
+  });
+  if (!picker.matches.length) list.append(el("li", { class: "muted", text: "메뉴 이름을 입력하세요" }));
+  $("pickInput").setAttribute("aria-activedescendant", picker.matches.length ? `pick-${picker.active}` : "");
+  list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+}
+// 떠 있는 상자를 anchor 아래(자리가 없으면 위)에 화면 안으로 맞춰 연다 -- 메뉴 검색창·kcal 정하기가 같이 씀
+function placePopover(box, anchor, width, height) {
+  const r = anchor.getBoundingClientRect();
+  const w = Math.min(width, document.documentElement.clientWidth - 16);
+  box.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - w - 8)) + "px";
+  const below = window.innerHeight - r.bottom > height;
+  box.style.top = (window.scrollY + (below ? r.bottom + 4 : r.top - 4)) + "px";
+  box.style.transform = below ? "" : "translateY(-100%)";
+  box.classList.add("open");
+}
+function openPicker(anchor, onPick) {
+  picker.onPick = onPick;
+  picker.anchor = anchor;
+  placePopover($("picker"), anchor, 320, 360);
+  $("pickInput").value = "";
+  picker.matches = pickerMatches("");
+  picker.active = 0;
+  renderPicker();
+  $("pickInput").focus();
+}
+function closePicker() { $("picker").classList.remove("open"); picker.onPick = null; }
+function choose(name) { const fn = picker.onPick; closePicker(); if (fn) fn(name); }
+$("pickInput").oninput = () => { picker.matches = pickerMatches($("pickInput").value); picker.active = 0; renderPicker(); };
+$("pickInput").addEventListener("keydown", (e) => {
+  // 한글 조합 중의 Enter·화살표·Esc는 글자 확정용 -- 선택으로 처리하면 마지막 글자가 잘리거나 다음 검색창으로 넘어간다
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === "ArrowDown") { picker.active = Math.min(picker.active + 1, picker.matches.length - 1); renderPicker(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { picker.active = Math.max(picker.active - 1, 0); renderPicker(); e.preventDefault(); }
+  else if (e.key === "Enter") { e.preventDefault(); if (picker.matches[picker.active]) choose(picker.matches[picker.active].name); }
+  else if (e.key === "Escape") { closePicker(); picker.anchor?.focus(); }
+});
+document.addEventListener("mousedown", (e) => {
+  if ($("picker").classList.contains("open") && !$("picker").contains(e.target)) closePicker();
+  if ($("kcalBox").classList.contains("open") && !$("kcalBox").contains(e.target)) closeKcalBox();
+});
+
+// ------------------------------------------------------------------ kcal 정하기 (기준표에 없는 메뉴 -> 내 메뉴)
+// source: user = 내가 정함, llm = 로컬 LLM 추정을 그대로 저장 (숫자를 고치면 user). 저장 전에는 아무것도 바뀌지 않는다
+const kbox = { name: null, source: "user", basis: "", seq: 0, onSaved: null, anchor: null };
+function openKcalBox(anchor, name, unitHint = "", onSaved = null) {
+  const mine = state.menus.find((m) => m.name === name && m.custom);
+  Object.assign(kbox, { name, source: mine?.source || "user", basis: mine?.basis || "", onSaved, anchor });
+  kbox.seq++;   // 열려 있던 추정 요청의 답은 무시
+  $("kTitle").textContent = `${name} kcal 정하기`;
+  $("kUnit").value = mine?.unit || unitHint || "1개";
+  $("kLow").value = mine ? String(mine.low) : "";
+  $("kHigh").value = mine ? String(mine.high) : "";
+  $("kMid").value = mine ? String(mine.mid) : "";
+  $("kBasis").textContent = ["llm", "calc"].includes(kbox.source) && kbox.basis ? `${kbox.source === "llm" ? "LLM 추정 근거" : "계산 근거"}: ${kbox.basis}` : "";
+  $("kMsg").textContent = "";
+  $("kEstimate").disabled = false;
+  fill($("kSimilar"));
+  fill($("kCompose"));
+  const ticket = kbox.seq;
+  api(`/api/menus/compose?name=${encodeURIComponent(name)}`).then((e) => {   // 이름을 풀어 계산 (LLM 없이, 근거 표시)
+    if (ticket !== kbox.seq) return;
+    const use = el("button", { class: "link usecalc", text: "이 값으로 채우기" });
+    use.onclick = () => {
+      $("kUnit").value = e.unit; $("kLow").value = String(e.low); $("kHigh").value = String(e.high); $("kMid").value = String(e.mid);
+      Object.assign(kbox, { source: "calc", basis: e.basis });
+      $("kBasis").textContent = "이름을 풀어 계산한 값으로 채웠습니다 — 맞는지 보고 저장하세요";
+      $("kSave").focus();
+    };
+    fill($("kCompose"),
+      el("div", { class: "head" }, el("b", { text: `구성으로 추정 약 ${kc(e.mid)} kcal` }),
+        el("span", { class: "muted num", text: `${kc(e.low)}–${kc(e.high)} · ${e.unit} · ${e.frame}` }),
+        e.rough ? el("span", { class: "badge b-warn", text: "대략", title: "이름에 모르는 말이 있어 요리 자체가 다를 수 있음" }) : null,
+        el("span", { class: "grow" }), use),
+      el("div", { class: "parts" }, ...e.parts.flatMap((p) => [el("span", { text: p.label }), el("span", { class: "d", text: p.detail }),
+        el("span", { class: "num", text: p.low === p.high ? kc(p.mid) : `${kc(p.low)}–${kc(p.high)}` })])),
+      e.notes.length ? el("div", { class: "muted", style: "margin-top:4px", text: e.notes.join(" · ") }) : null);
+    if (!mine) use.focus();
+  }).catch(() => {});   // 404 = 이름으로 풀 수 없음 -> 칸을 비워 둔다
+  api(`/api/menus/similar?name=${encodeURIComponent(name)}`).then((sims) => {   // LLM 없이도 우리 기준치로 채울 수 있게
+    if (ticket !== kbox.seq || !sims.length) return;
+    fill($("kSimilar"), el("span", { class: "muted", text: "비슷한 메뉴 값으로:" }), ...sims.map((s) => {
+      const b = el("button", { class: "link", text: `${s.name} ${s.unit} ${kc(s.low)}–${kc(s.high)}` });
+      b.onclick = () => {
+        $("kUnit").value = s.unit; $("kLow").value = String(s.low); $("kHigh").value = String(s.high); $("kMid").value = String(s.mid);
+        Object.assign(kbox, { source: "user", basis: `${s.name} ${s.unit} 값 참고` });
+        $("kBasis").textContent = `${s.name} 값으로 채웠습니다 — 양·재료 차이가 있으면 고치세요`;
+      };
+      return b;
+    }));
+  }).catch(() => {});
+  placePopover($("kcalBox"), anchor, 360, 300);
+  (mine ? $("kLow") : $("kEstimate")).focus();
+}
+function closeKcalBox() { kbox.seq++; $("kcalBox").classList.remove("open"); }
+for (const id of ["kLow", "kHigh", "kMid", "kUnit"]) {
+  $(id).addEventListener("input", () => { if (["llm", "calc"].includes(kbox.source)) { kbox.source = "user"; kbox.basis = ""; $("kBasis").textContent = ""; } });
+}
+$("kCancel").onclick = () => { closeKcalBox(); kbox.anchor?.focus(); };
+$("kcalBox").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeKcalBox(); kbox.anchor?.focus(); }
+  else if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && e.target.tagName === "INPUT") { e.preventDefault(); $("kSave").click(); }
+});
+$("kEstimate").onclick = async () => {
+  const ticket = ++kbox.seq;
+  const btn = $("kEstimate");
+  btn.disabled = true;
+  $("kMsg").className = "cap muted";
+  $("kMsg").textContent = "로컬 LLM에 묻는 중…";
+  let r;
+  try { r = await api("/api/menus/estimate", { method: "POST", json: { name: kbox.name, unit: $("kUnit").value.trim() || null } }); }
+  catch (e) {
+    if (ticket !== kbox.seq) return;
+    btn.disabled = false;
+    $("kMsg").className = "cap err";
+    $("kMsg").textContent = e.kind === "llm_down" ? "로컬 LLM에 연결할 수 없습니다. 직접 넣어 주세요." : `추정하지 못했습니다: ${e.message}`;
+    return;
+  }
+  if (ticket !== kbox.seq) return;   // 그사이 상자를 닫았거나 다른 메뉴를 열었음
+  btn.disabled = false;
+  if (!r.known) { $("kMsg").className = "cap err"; $("kMsg").textContent = "LLM도 이 메뉴의 kcal를 모릅니다. 직접 넣어 주세요."; return; }
+  $("kUnit").value = r.unit; $("kLow").value = String(r.low); $("kHigh").value = String(r.high); $("kMid").value = String(r.mid);
+  Object.assign(kbox, { source: "llm", basis: r.basis });
+  $("kBasis").textContent = `LLM 추정 근거: ${r.basis || "(없음)"}` + (r.refs?.length ? ` · 참고한 기준: ${r.refs.join(", ")}` : "") +
+    " — 맞는지 보고 저장하세요";
+  $("kMsg").textContent = "";
+  $("kSave").focus();
+};
+$("kSave").onclick = async () => {
+  const low = Number($("kLow").value), high = Number($("kHigh").value), midRaw = $("kMid").value.trim();
+  const unit = $("kUnit").value.trim();
+  const bad = !unit ? "단위를 넣어 주세요 (예: 1개)." : ($("kLow").value === "" || $("kHigh").value === "") ? "kcal 낮음·높음을 넣어 주세요 (같으면 같은 값)."
+    : !(low >= 0 && high > 0 && low <= high && high <= 5000) ? "kcal는 0 ≤ 낮음 ≤ 높음 ≤ 5,000으로 넣어 주세요."
+    : midRaw && !(Number(midRaw) >= low && Number(midRaw) <= high) ? "보통은 낮음과 높음 사이로 넣어 주세요." : "";
+  if (bad) { $("kMsg").className = "cap err"; $("kMsg").textContent = bad; return; }
+  const name = kbox.name, onSaved = kbox.onSaved;
+  let r;
+  try {
+    r = await api(`/api/menus/${encodeURIComponent(name)}`, { method: "PUT", json: { unit, low, high, mid: midRaw ? Number(midRaw) : null,
+      source: kbox.source, basis: kbox.basis || null } });
+  } catch (e) { $("kMsg").className = "cap err"; $("kMsg").textContent = `저장하지 못했습니다: ${e.message}`; return; }
+  closeKcalBox();
+  await reloadMenus();
+  if (onSaved) onSaved();
+  await refresh();
+  const prev = r.previous;
+  say(`${name}(${unit} ${kc(r.menu.low)}–${kc(r.menu.high)} kcal)을(를) 내 메뉴에 저장했습니다.`, { undo: async () => {
+    if (prev) await api(`/api/menus/${encodeURIComponent(name)}`, { method: "PUT", json: { unit: prev.unit, low: prev.low, mid: prev.mid,
+      high: prev.high, source: prev.source, basis: prev.basis } });
+    else await api(`/api/menus/${encodeURIComponent(name)}`, { method: "DELETE" });
+    await reloadMenus();
+    if (onSaved) onSaved();
+  } });
+};
+async function reloadMenus() {
+  state.menus = await api("/api/menus");
+  renderMyMenus();
+}
+function renderMyMenus() {
+  const mine = state.menus.filter((m) => m.custom);
+  if (!mine.length) { fill($("myMenus"), el("tr", {}, el("td", { colspan: "5", class: "muted wrap", text: "아직 없습니다. 끼니나 채팅 미리보기의 'kcal 정하기'로 추가합니다." }))); return; }
+  fill($("myMenus"), ...mine.map((m) => {
+    const edit = el("button", { class: "link", text: "고치기" });
+    edit.onclick = () => openKcalBox(edit, m.name);
+    const del = el("button", { class: "link danger", text: "지우기" });
+    del.onclick = async () => {
+      let r;
+      try { r = await api(`/api/menus/${encodeURIComponent(m.name)}`, { method: "DELETE" }); }
+      catch (e) { say(`지우지 못했습니다: ${e.message}`, { error: true }); return; }
+      await reloadMenus(); await refresh();
+      const d = r.deleted;
+      say(`내 메뉴에서 ${m.name}을(를) 지웠습니다. 이 메뉴가 든 끼니는 다시 kcal 모름입니다.`, { undo: async () => {
+        await api(`/api/menus/${encodeURIComponent(d.name)}`, { method: "PUT", json: { unit: d.unit, low: d.low, mid: d.mid, high: d.high,
+          source: d.source, basis: d.basis } });
+        await reloadMenus();
+      } });
+    };
+    return el("tr", {}, el("td", { text: m.name }), el("td", { text: m.unit }),
+      el("td", { class: "n", text: `${kc(m.low)}–${kc(m.high)} / ${kc(m.mid)}` }),
+      el("td", { class: "cap", text: { llm: "LLM 추정", label: "포장지 영양정보", user: "직접 정함" }[m.source] || m.source, title: m.basis || "" }),
+      el("td", {}, edit, del));
+  }));
+}
+
+// ------------------------------------------------------------------ 가져오기 (열 때마다 자동 + 버튼)
+let syncing = false;
+async function loadStatus() {
+  const s = await api("/api/status");
+  state.lastDate = s.last_date; state.firstDate = s.first_date; state.meals = s.meals; state.lastSync = s.last_sync;
+  return s;
+}
+function syncLabel(text, isErr = false) { fill($("syncState"), el("span", { class: isErr ? "err" : "", text })); }
+async function sync() {
+  if (syncing) return;
+  syncing = true;
+  $("syncBtn").disabled = true;
+  syncLabel("card_spending에서 가져오는 중…");
+  try {
+    const r = await api("/api/sync", { method: "POST" });
+    await loadStatus();
+    const news = [r.added ? `새로 ${won.format(r.added)}끼` : "", r.removed ? `취소돼 뺌 ${won.format(r.removed)}` : ""].filter(Boolean);
+    syncLabel(`가져옴 ${syncTime(state.lastSync)}` + (news.length ? ` · ${news.join(" · ")}` : ""));
+    if ($("status").dataset.kind === "down") fill($("status"));
+  } catch (e) {
+    await loadStatus().catch(() => {});
+    if (e.kind === "down") {
+      syncLabel("card_spending 꺼짐", true);
+      say("card_spending 서버가 꺼져 있어 새 결제를 가져오지 못했습니다.", { error: true, sticky: true, kind: "down",
+        extra: el("span", { class: "cap" }, "card_spending 폴더에서 ", el("code", { text: "python -m card_spending serve" }),
+                  "로 켠 뒤 ‘다시 가져오기’를 누르세요. 이미 가져온 기록과 직접 입력은 그대로 쓸 수 있습니다.") });
+    } else {
+      syncLabel("가져오기 실패", true);
+      say(`card_spending에서 가져오지 못했습니다: ${e.message}`, { error: true });
+    }
+  } finally {
+    syncing = false;
+    $("syncBtn").disabled = false;
+  }
+}
+$("syncBtn").onclick = async () => { await sync(); await refresh(); };
+
+// ------------------------------------------------------------------ 확인할 끼니 (머리글)
+async function loadReview() {
+  const ticket = ++seq.review;
+  const r = await api("/api/review");
+  if (ticket !== seq.review) return state.review;
+  state.review = r;
+  const chip = $("reviewChip");
+  chip.hidden = !state.meals;
+  chip.classList.toggle("none", !r.count);
+  chip.textContent = r.count ? `확인할 끼니 ${won.format(r.count)} ▸` : "확인할 끼니 없음";
+  chip.disabled = !r.count;
+  chip.title = r.count ? "가장 오래된 것부터 엽니다"
+    : (r.buried ? `정리 기준일(${r.review_since}) 이전 ${won.format(r.buried)}끼는 메뉴 모름으로 둠` : "");
+  const bury = $("buryBtn");
+  bury.hidden = !r.suggest_since;
+  if (r.suggest_since) bury.textContent = `${md(r.suggest_since)} 이전은 모름으로 두기`;
+  return r;
+}
+$("reviewChip").onclick = () => goNextReview();
+$("buryBtn").onclick = async () => {
+  const to = state.review.suggest_since;
+  let r;
+  try { r = await api("/api/review/since", { method: "PUT", json: { date: to } }); }
+  catch (e) { say(`정리 기준일을 옮기지 못했습니다: ${e.message}`, { error: true }); return; }
+  await refresh();
+  say(`${md(to)} 이전 끼니는 메뉴 모름으로 두었습니다 (기록은 그대로). 확인할 끼니 ${won.format(r.count)}개 남음.`,
+      { undo: () => api("/api/review/since", { method: "PUT", json: { date: r.previous } }) });
+};
+async function goNextReview() {
+  const r = await loadReview();
+  const m = r.rows[0];
+  if (!m) { state.flow = false; say("확인할 끼니를 모두 처리했습니다."); return; }
+  state.flow = true;
+  await selectDay(m.date, { flow: true });
+  const node = document.querySelector(`#dayBody .entry[data-id="${m.id}"]`);
+  if (!node) return;
+  node.scrollIntoView({ block: "nearest" });
+  if (m.reasons.includes("메뉴 모름")) {
+    const take = node.querySelector(".sugg .take");   // 지난번 같은 결제 제안이 있으면 검색창 대신 [넣기]로
+    if (take) take.focus(); else node.querySelector(".addmenu")?.click();
+  }
+  else node.querySelector(".confirm")?.focus();
+}
+
+// ------------------------------------------------------------------ 캘린더
+async function loadCalendar() {
+  const month = state.month;
+  if (!month) return;
+  $("monthLabel").textContent = monthLabel(month);
+  const ticket = ++seq.calendar;
+  $("cal").setAttribute("aria-busy", "true");   // 새 달을 받는 동안 옛 달 칸은 흐리게 (머리글은 이미 새 달)
+  if (!$("cal").children.length) fill($("cal"), el("div", { class: "skel", style: "grid-column: 1 / -1; height: 420px" }));
+  let r;
+  try { r = await api(`/api/calendar?month=${month}`); }
+  catch (e) {
+    if (ticket === seq.calendar) {
+      fill($("cal"), el("div", { class: "empty err", text: `캘린더를 불러오지 못했습니다: ${e.message}` }));
+      $("cal").removeAttribute("aria-busy");
+    }
+    return;
+  }
+  if (ticket !== seq.calendar) return;   // 그사이 다른 달을 눌렀음 -- 옛 응답 무시
+  renderCalendar(r);
+  $("cal").removeAttribute("aria-busy");
+}
+// kcal 표기: 모르는 끼니가 섞이면 "아는 것 합 + ?" (최소 이만큼은 먹었고 나머지는 모름)
+function dayKcalShort(k, unknown) {
+  if (!k) return unknown ? "? kcal" : "";
+  return `${kc(k.mid)}${unknown ? "+?" : ""} kcal`;
+}
+function cellText(c) {
+  if (c.state === "none") return "";
+  if (c.state === "skip") return "건너뜀";
+  return c.entries.map((e) => (e.label || (e.needs_review ? "?" : "모름")) + (e.label && e.needs_review ? " ?" : "")).join(" · ");
+}
+function renderCalendar(r) {
+  const head = ["월", "화", "수", "목", "금", "토", "일"].map((d) => el("div", { class: "dow" + (d === "일" ? " sun" : ""), text: d }));
+  const firstDow = (parseIso(r.month + "-01").getDay() + 6) % 7;   // 월요일 시작
+  const blanks = Array.from({ length: firstDow }, () => el("div", { class: "day out", "aria-hidden": "true" }));
+  const t = today();
+  const days = r.days.map((d) => {
+    const parts = SLOTS.map((s) => `${s} ${d.slots[s].state === "ok" ? cellText(d.slots[s]) : STATE_WORD[d.slots[s].state]}`);
+    const label = `${Number(d.date.slice(5, 7))}월 ${Number(d.date.slice(8))}일 ${dow(d.date)}요일` +
+      (d.kcal ? `, 약 ${kc(d.kcal.mid)} kcal${d.unknown ? ` 이상 (모르는 끼니 ${d.unknown}개)` : ""}` : "") + ". " + parts.join(", ");
+    const b = el("button", { class: "day" + (d.date === state.day ? " sel" : "") + (d.date === t ? " today" : "") +
+                                    (conv.touched.has(d.date) ? " touched" : ""),
+                             "data-date": d.date, "aria-label": label, "aria-pressed": String(d.date === state.day) },
+      el("div", { class: "top" }, el("span", { class: "dnum", text: String(Number(d.date.slice(8))) }),
+         el("span", { class: "kc num", text: dayKcalShort(d.kcal, d.unknown) })),
+      el("div", { class: "tray", "aria-hidden": "true" }, ...SLOTS.map((s) =>
+        el("div", { class: `r ${d.slots[s].state}`, "data-slot": s },
+          el("span", { class: "k", text: s[0] }), el("span", { class: "v", text: cellText(d.slots[s]) })))),
+      el("div", { class: "bars", "aria-hidden": "true" }, ...SLOTS.map((s) => el("span", { class: `bar ${d.slots[s].state}` }))),
+      d.groceries ? el("div", { class: "extra", text: `장보기 ${d.groceries}` }) : null);   // 모르는 끼니는 위 kcal의 "+?"로
+    b.title = parts.join("\n");
+    b.onclick = () => selectDay(d.date);
+    return b;
+  });
+  let empty = null;
+  if (!state.meals) {
+    const start = el("button", { class: "primary", id: "onboardSync", text: "card_spending에서 가져오기" });
+    start.onclick = async () => { await sync(); await refresh(); };
+    empty = el("div", { class: "empty muted" },
+      el("div", { text: "여기에 날짜별로 먹은 끼니가 아침·점심·저녁·간식·야식 다섯 줄로 표시됩니다." }),
+      el("div", { text: "card_spending의 식비 결제를 가져오면 끼니가 자동으로 채워집니다. 날짜를 눌러 집밥 등을 직접 넣을 수도 있습니다." }),
+      el("div", { style: "margin-top:10px" }, start));
+  }
+  fill($("cal"), empty, ...head, ...blanks, ...days);   // 첫 사용 안내는 달력 위 (시작 버튼이 먼저 보이게)
+}
+function markSelected() {
+  for (const x of document.querySelectorAll("#cal .day[data-date]")) {
+    const on = x.dataset.date === state.day;
+    x.classList.toggle("sel", on);
+    x.setAttribute("aria-pressed", String(on));
+  }
+}
+$("prevMonth").onclick = () => { state.month = shiftMonth(state.month, -1); loadCalendar(); };
+$("nextMonth").onclick = () => { state.month = shiftMonth(state.month, 1); loadCalendar(); };
+$("todayBtn").onclick = () => selectDay(today());
+
+// ------------------------------------------------------------------ 고른 날
+async function selectDay(day, { flow = false, keepTab = false } = {}) {
+  if (!flow) state.flow = false;
+  if (!keepTab) showTab("day");   // 날짜를 고르는 동작은 모두 "그날 보기" -- 대화 중이어도 고른 날 탭으로 (대화는 그대로 남음)
+  state.day = day;
+  history.replaceState(null, "", `#${day}`);
+  const month = day.slice(0, 7);
+  if (month !== state.month) { state.month = month; loadCalendar(); } else markSelected();
+  loadWeekLine(day);
+  await loadDay(day);
+}
+async function loadDay(day) {
+  if (!day) return;
+  const ticket = ++seq.day;
+  $("dayTitle").textContent = `${md(day)} (${dow(day)})`;
+  let ms;
+  try { ms = await api(`/api/meals?start=${day}&end=${day}`); }
+  catch (e) { if (ticket === seq.day) fill($("dayBody"), el("div", { class: "err", text: `이날 기록을 불러오지 못했습니다: ${e.message}` })); return; }
+  if (ticket !== seq.day) return;   // 그사이 다른 날을 눌렀음
+  renderDay(day, ms);
+}
+function renderDay(day, ms) {
+  $("dayBody").dataset.day = day;   // 다 그린 날 (점검 스크립트가 기다리는 표시)
+  const known = ms.filter((m) => m.kcal);
+  const tot = known.reduce((a, m) => ({ low: a.low + m.kcal.low, mid: a.mid + m.kcal.mid, high: a.high + m.kcal.high }), { low: 0, mid: 0, high: 0 });
+  const unknown = ms.filter((m) => SLOTS.includes(m.slot) && !m.skipped && !m.excluded && (!m.kcal || m.kcal.partial)).length;
+  $("dayTotal").textContent = !known.length
+    ? (unknown ? `하루 ? kcal — 메뉴(또는 kcal)를 모르는 끼니 ${unknown}개` : (ms.length ? "" : "이날 기록이 없습니다. 먹은 끼니를 아래에서 추가하세요."))
+    : unknown
+      ? `하루 최소 약 ${kc(tot.mid)} kcal + ? (아는 것 ${kc(tot.low)}–${kc(tot.high)}, 모르는 끼니 ${unknown}개)`
+      : `하루 약 ${kc(tot.mid)} kcal (${kc(tot.low)}–${kc(tot.high)})`;
+  const w = state.settings?.windows || {};
+  const slotsShown = [...SLOTS, ...(ms.some((m) => m.slot === "장보기") ? ["장보기"] : [])];
+  fill($("dayBody"), ...slotsShown.map((s) => {
+    const list = ms.filter((m) => m.slot === s);
+    const win = w[s] ? `${w[s][0]}–${w[s][1]}` : (s === "간식" ? "그 밖의 시간" : s === "장보기" ? "먹은 끼니 아님" : "");
+    return el("section", { class: "slot", "data-slot": s },
+      el("div", { class: "head" }, el("b", { text: s }), el("span", { class: "cap muted", text: win })),
+      ...(list.length ? list.map((m) => entryView(day, m)) : [emptySlotView(day, s)]));
+  }));
+}
+// "kcal 모름" 자리: 누르면 kcal 정하기 상자 (기준표에 없는 메뉴만 -- 있는 메뉴는 kcal가 이미 있음)
+function kcalButton(name, unitHint, onSaved = null, calc = null) {
+  const text = calc ? `구성 추정 약 ${kc(calc.mid)} kcal${calc.rough ? " (대략)" : ""} · 확인` : "kcal 모름 · 정하기";
+  const b = el("button", { class: "link cap kcalset", text, title: `${name}의 1단위 kcal를 정해 내 메뉴에 저장` });
+  b.onclick = () => openKcalBox(b, name, unitHint, onSaved);
+  return b;
+}
+function snapshotItems(m) { return m.items.map((it) => ({ name: it.name, qty: it.qty, kcal: it.kcal_manual })); }
+// 끼니 하나 바꾸기: 저장 → 다시 그림 → 되돌리기 제공. 확인 필요였던 끼니가 해결되면 다음 확인할 끼니로 넘어간다
+async function act(m, changes, undoChanges, msg) {
+  try { await api(`/api/meals/${m.id}`, { method: "PUT", json: changes }); }
+  catch (e) { say(`저장하지 못했습니다: ${e.message}`, { error: true }); return; }
+  await refresh();
+  say(msg, { undo: () => api(`/api/meals/${m.id}`, { method: "PUT", json: undoChanges }) });
+  if (state.flow && m.needs_review && state.review && !state.review.rows.some((x) => x.id === m.id)) await goNextReview();
+}
+function entryView(day, m) {
+  const grocery = m.slot === "장보기";
+  if (m.skipped) {
+    const undoSkip = el("button", { class: "link", text: "건너뜀 취소" });
+    undoSkip.onclick = () => removeManual(m, `${m.slot} 건너뜀을 취소했습니다.`);
+    return el("div", { class: "entry", "data-id": String(m.id) },
+      el("div", { class: "meta" }, el("span", { class: "muted", text: "건너뜀 — 이 끼니는 먹지 않음" }), el("span", { class: "grow" }), undoSkip));
+  }
+  const meta = el("div", { class: "meta" },
+    el("span", { class: "place", text: m.place || "직접 입력" }),
+    el("span", { class: "cap muted num", text: [m.time, m.category, m.amount != null ? `${won.format(m.amount)}원` : "",
+      m.pay_date && m.pay_date !== m.date ? `결제는 ${md(m.pay_date)} 새벽` : "", m.note || ""].filter(Boolean).join(" · ") }),
+    ...m.reasons.map((x) => el("span", { class: "badge " + (m.needs_review ? "b-warn" : "b-mute"), text: x })),
+    el("span", { class: "grow" }),
+    el("span", { class: "cap num", text: m.excluded ? "집계 제외" : grocery ? "" :
+      m.kcal ? `1인 약 ${kc(m.kcal.mid)}${m.kcal.partial ? " + ?" : ""} kcal` : "? kcal" }));
+  const prev = snapshotItems(m);
+  const chips = m.items.map((it, i) => {
+    const x = el("button", { class: "x", "aria-label": `${it.name} 빼기`, text: "×" });
+    x.onclick = () => {
+      const l = snapshotItems(m);
+      l.splice(i, 1);   // 메뉴를 다 빼면 다시 "메뉴 모름" -- 확인 필요로 되돌린다
+      act(m, { items: l, ...(l.length ? {} : { confirmed: false }) }, { items: prev, confirmed: m.confirmed }, `${it.name}을(를) 뺐습니다.`);
+    };
+    return el("span", { class: "chip" }, itemLabel(it),
+      it.kcal ? el("span", { class: "cap muted num", text: `${kc(it.kcal.low)}–${kc(it.kcal.high)}`, title: KCAL_SOURCE[it.kcal.source](it.kcal) })
+              : kcalButton(it.name, ""),
+      it.kcal?.source === "manual" ? el("span", { class: "badge b-mute", text: "직접 입력" }) : null,
+      it.kcal?.source === "db" ? el("span", { class: "badge b-mute", text: "식약처", title: KCAL_SOURCE.db(it.kcal) }) : null,
+      ["user", "llm", "label", "calc"].includes(it.kcal?.source) ? el("span", { class: "badge b-mute", text: it.kcal.source === "label" ? "포장지 영양정보" : "내 메뉴",
+                                                                         title: KCAL_SOURCE[it.kcal.source](it.kcal) }) : null,
+      it.guessed ? el("span", { class: "badge b-info", text: "가게 이름으로 추정" }) : null, x);
+  });
+  const suggs = (m.suggest || []).map((sg) => suggestionRow(m, sg, prev));
+  const add = el("button", { class: "link addmenu", text: m.items.length ? "+ 메뉴 추가" : "? 메뉴 고르기" });
+  add.onclick = () => openPicker(add, (name) =>
+    act(m, { items: [...snapshotItems(m), { name, qty: 1 }] }, { items: prev, confirmed: m.confirmed }, `${name}을(를) 넣었습니다.`));
+  const move = el("select", { "aria-label": "끼니 옮기기" }, ...MOVE_SLOTS.map((s) => el("option", { value: s, text: s })));
+  move.value = m.slot;
+  move.onchange = () => act(m, { slot: move.value }, { slot: m.slot }, `${ro(move.value)} 옮겼습니다.`);
+  const ctl = [el("span", { class: "muted", text: "끼니" }), move];
+  if (!grocery) {
+    const ppl = el("select", { "aria-label": "인원" });
+    for (let i = 1; i <= Math.max(8, m.people); i++) ppl.append(el("option", { value: String(i), text: `${i}명` }));
+    ppl.value = String(m.people);
+    ppl.onchange = () => act(m, { people: Number(ppl.value) }, { people: m.people }, `인원을 ${ppl.value}명으로 바꿨습니다.`);
+    ctl.push(el("span", { class: "muted", text: "인원" }), ppl);
+  }
+  ctl.push(el("span", { class: "grow" }));
+  if (m.reasons.length) {
+    const ok = el("button", { class: "link confirm", text: "맞음으로 확인" });
+    ok.onclick = () => act(m, { confirmed: true }, { confirmed: false }, "맞음으로 확인했습니다.");
+    ctl.push(ok);
+  }
+  if (m.source === "manual") {
+    const del = el("button", { class: "link danger", text: "지우기" });
+    del.onclick = () => removeManual(m, "직접 넣은 기록을 지웠습니다.");
+    ctl.push(del);
+  } else {
+    const ex = el("button", { class: "link", text: m.excluded ? "다시 포함" : "먹지 않음", title: "내가 먹은 게 아니면 집계에서 뺍니다" });
+    ex.onclick = () => act(m, { excluded: !m.excluded }, { excluded: m.excluded },
+                           m.excluded ? "다시 포함했습니다." : "먹지 않음으로 집계에서 뺐습니다.");
+    ctl.push(ex);
+  }
+  return el("div", { class: "entry" + (m.excluded ? " excluded" : ""), "data-id": String(m.id) },
+    meta, ...suggs, grocery ? null : el("div", { class: "chips" }, ...chips, add), el("div", { class: "ctl" }, ...ctl));
+}
+// 경험 기억 제안 한 줄: "지난번 같은 금액 2번 중 2번 · 마지막 11/3: 가나다치킨 · 치킨·콜라 [넣기] [틀림]"
+function suggestionRow(m, sg, prev) {
+  const what = sg.items.map((i) => i.qty === 1 ? i.name : `${i.name} ×${i.qty}`).join("·");
+  const why = (sg.basis === "same_amount" ? `지난번 같은 금액 ${sg.of}번 중 ${sg.times}번` : `이 가게 ${sg.of}번 중 ${sg.times}번`) +
+              ` · 마지막 ${md(sg.last)}` + (sg.store ? ` · ${sg.store}` : "");
+  const take = el("button", { class: "link take", text: "넣기", title: "이 메뉴" + (sg.store ? "와 가게 이름" : "") + "으로 채웁니다 (되돌리기 가능)" });
+  take.onclick = () => act(m, { items: sg.items.map((i) => ({ name: i.name, qty: i.qty })), ...(sg.store ? { store: sg.store } : {}) },
+                           { items: prev, store: m.store, confirmed: m.confirmed }, `지난번 메뉴로 채웠습니다 (${sg.store ? sg.store + " · " : ""}${what}).`);
+  const no = el("button", { class: "link", text: "틀림", title: "이 끼니에는 이 제안을 다시 띄우지 않습니다" });
+  no.onclick = async () => {
+    const path = `/api/meals/${m.id}/suggestions/reject`;
+    try { await api(path, { method: "POST", json: { signature: sg.signature } }); }
+    catch (e) { say(`저장하지 못했습니다: ${e.message}`, { error: true }); return; }
+    await refresh();
+    say("이 끼니에는 그 제안을 띄우지 않습니다.", { undo: () => api(`${path}?signature=${encodeURIComponent(sg.signature)}`, { method: "DELETE" }) });
+  };
+  return el("div", { class: "sugg" },
+            el("div", {}, el("div", { class: "what", text: what }), el("div", { class: "why", text: why })),
+            el("div", { class: "acts" }, take, no));
+}
+async function removeManual(m, msg) {
+  try { await api(`/api/meals/${m.id}`, { method: "DELETE" }); }
+  catch (e) { say(`지우지 못했습니다: ${e.message}`, { error: true }); return; }
+  await refresh();
+  const again = { date: m.date, slot: m.slot, people: m.people, note: m.note, place: m.place, time: m.time,
+                  skipped: !!m.skipped, items: m.skipped ? [] : snapshotItems(m) };
+  say(msg, { undo: () => api("/api/meals", { method: "POST", json: again }) });
+}
+async function addManual(body, msg) {
+  let r;
+  try { r = await api("/api/meals", { method: "POST", json: body }); }
+  catch (e) { say(`저장하지 못했습니다: ${e.message}`, { error: true }); return; }
+  await refresh();
+  say(msg, { undo: () => api(`/api/meals/${r.id}`, { method: "DELETE" }) });
+}
+function emptySlotView(day, slot) {
+  if (slot === "장보기") return el("div", { class: "cap muted", text: "기록 없음" });
+  const add = el("button", { class: "link addmenu", text: "+ 먹은 것 추가" });
+  add.onclick = () => openPicker(add, (name) =>
+    addManual({ date: day, slot, items: [{ name, qty: 1 }] }, `${md(day)} ${slot}에 ${name}을(를) 넣었습니다.`));
+  const skip = el("button", { class: "link", text: "건너뜀", title: "이 끼니는 먹지 않았다고 표시" });
+  skip.onclick = () => addManual({ date: day, slot, skipped: true }, `${md(day)} ${slot}을(를) 건너뜀으로 표시했습니다.`);
+  return el("div", { class: "row cap" }, el("span", { class: "muted", text: "기록 없음" }), add, skip);
+}
+
+// ------------------------------------------------------------------ 주 요약 한 줄 + 주별 추이
+function weekText(w) {
+  if (!w || !w.meals) return "기록 없음";
+  return [w.avg_kcal ? `하루 평균 약 ${kc(w.avg_kcal.mid)} kcal (${kc(w.avg_kcal.low)}–${kc(w.avg_kcal.high)}, 다 아는 ${w.kcal_days}일 기준)`
+                     : "하루 평균 kcal ? (끼니를 다 아는 날 없음)",
+          `끼니 ${w.meals}`, `야식 ${w.yasik_days}일`, `배달 ${w.delivery}`, `외식 ${w.eating_out}`,
+          w.unknown ? `kcal 모르는 끼니 ${w.unknown}` : null].filter(Boolean).join(" · ");
+}
+async function loadWeekLine(day) {
+  const ticket = ++seq.week;
+  const mon = addDays(day, -((parseIso(day).getDay() + 6) % 7));
+  let r;
+  try { r = await api(`/api/weekly?end=${day}&weeks=1`); } catch (_) { return; }
+  if (ticket !== seq.week) return;
+  const w = r.weeks.find((x) => x.week_start === mon);
+  fill($("weekLine"), el("b", { text: `${md(mon)}–${md(addDays(mon, 6))} 주` }), " · ", weekText(w));
+}
+async function loadWeekly() {
+  const ticket = ++seq.weekly;
+  let r;
+  try { r = await api("/api/weekly?weeks=12"); }
+  catch (e) { if (ticket === seq.weekly) fill($("weekRows"), el("tr", {}, el("td", { colspan: "10", class: "err wrap", text: `불러오지 못했습니다: ${e.message}` }))); return; }
+  if (ticket !== seq.weekly) return;
+  $("weekNote").textContent = r.weeks.length ? `최근 ${r.weeks.length}주 (기록 마지막 날 ${r.end}까지)` : "";
+  const rows = [...r.weeks].reverse();
+  if (!rows.length) {
+    fill($("weekRows"), el("tr", {}, el("td", { colspan: "10", class: "muted wrap", text: "아직 기록이 없습니다. 결제를 가져오거나 날짜를 눌러 직접 넣으면 주별로 모입니다." })));
+    return;
+  }
+  fill($("weekRows"), ...rows.map((w) => {
+    const go = el("button", { class: "link", text: w.week_start, title: "이 주로 이동" });
+    go.onclick = () => { selectDay(w.week_start); $("calPanel").scrollIntoView({ block: "start" }); };
+    return el("tr", {}, el("td", {}, go),
+      el("td", { class: "n", text: w.avg_kcal ? kc(w.avg_kcal.mid) : "—" }),
+      el("td", { class: "n muted", text: w.avg_kcal ? `${kc(w.avg_kcal.low)}–${kc(w.avg_kcal.high)}` : "" }),
+      el("td", { class: "n", text: `${w.kcal_days}일` }), el("td", { class: "n", text: `${w.partial_days}일` }),
+      el("td", { class: "n", text: won.format(w.meals) }),
+      el("td", { class: "n", text: `${w.yasik_days}일` }), el("td", { class: "n", text: won.format(w.delivery) }),
+      el("td", { class: "n", text: won.format(w.eating_out) }), el("td", { class: "n", text: won.format(w.unknown) }));
+  }));
+}
+
+// ------------------------------------------------------------------ 설정
+function renderSettings(s) {
+  fill($("winRows"), ...["아침", "점심", "저녁", "야식"].map((slot) =>
+    el("span", { class: "winrow cap" }, el("span", { text: slot }),
+      el("input", { type: "time", id: `w-${slot}-0`, value: s.windows[slot][0], "aria-label": `${slot} 시작` }), "–",
+      el("input", { type: "time", id: `w-${slot}-1`, value: s.windows[slot][1], "aria-label": `${slot} 끝` }))));
+  $("snackMin").value = String(s.snack_meal_min_krw);
+  $("sinceInput").value = s.review_since || "";
+  $("warnInput").value = String(s.backlog_warn);
+}
+async function loadSettings() { state.settings = await api("/api/settings"); renderSettings(state.settings); renderMyMenus(); }
+function toggleSettings(open) {
+  $("settingsPanel").hidden = !open;
+  $("settingsBtn").setAttribute("aria-expanded", String(open));
+  if (open) { renderSettings(state.settings); $("setMsg").textContent = ""; }
+}
+$("settingsBtn").onclick = () => toggleSettings($("settingsPanel").hidden);
+$("settingsClose").onclick = () => toggleSettings(false);
+$("setDefault").onclick = () => renderSettings({ ...state.settings, windows: state.settings.defaults,
+  snack_meal_min_krw: state.settings.default_snack_meal_min_krw, backlog_warn: state.settings.default_backlog_warn });
+$("setSave").onclick = async () => {
+  const windows = {};
+  for (const slot of ["아침", "점심", "저녁", "야식"]) windows[slot] = [$(`w-${slot}-0`).value, $(`w-${slot}-1`).value];
+  const msg = $("setMsg");
+  try {
+    const r = await api("/api/settings", { method: "PUT", json: { windows, snack_meal_min_krw: Number($("snackMin").value),
+                                                                   backlog_warn: Number($("warnInput").value) || null } });
+    const since = $("sinceInput").value || null;
+    if (since !== (r.review_since || null)) await api("/api/review/since", { method: "PUT", json: { date: since } });
+    await loadSettings();
+    msg.className = "cap";
+    msg.textContent = `저장했습니다. 끼니 ${won.format(r.moved)}개를 새 시간대로 옮겼습니다.`;
+    await refresh();
+  } catch (e) {
+    msg.className = "cap err";
+    msg.textContent = `저장하지 못했습니다: ${e.message}` + (/겹침/.test(e.message) ? " — 한 시간대의 끝이 다음 시간대 시작보다 앞서게 고치세요." : "");
+  }
+};
+
+// ------------------------------------------------------------------ 채팅 입력 ("오늘 아침에 고구마 1개 먹었어")
+// 해석(규칙 -> 못 하면 로컬 LLM)은 서버, 저장은 기존 API (채우기 = PUT, 새 끼니 = POST) -- 되돌리기도 같은 방식
+const chatState = { seq: 0, r: null };
+const menuOf = (name) => state.menus.find((m) => m.name === name);
+function defaultTarget(e) { const c = e.fill_candidates.find((x) => x.slot === e.slot); return c ? String(c.id) : "new"; }
+async function chatParse(forceLlm = false) {
+  const text = $("chatInput").value.trim();
+  if (!text) { fill($("chatPreview"), el("div", { class: "cap err", text: "먹은 것을 적어 주세요. 예: 점심에 김밥 한 줄" })); return; }
+  const ticket = ++chatState.seq;
+  fill($("chatPreview"), el("div", { class: "cap muted", text: forceLlm ? "로컬 LLM으로 해석하는 중… (보통 5~10초)" : "해석하는 중…" }));
+  let r;
+  try {
+    r = await api("/api/chat/parse", { method: "POST", json: { text, date: $("chatDate").value || null, today: today(), force_llm: forceLlm } });
+  } catch (e) {
+    if (ticket !== chatState.seq) return;
+    const msg = e.kind === "llm_down"
+      ? "이 문장은 규칙으로 해석하지 못했고 로컬 LLM에 연결할 수 없습니다. 끼니마다 짧게 나눠 적어 주세요 (예: 점심에 김밥)."
+      : e.kind === "bad_llm_output" ? "로컬 LLM의 답을 해석하지 못했습니다. 문장을 조금 바꿔 다시 시도해 주세요."
+      : `해석하지 못했습니다: ${e.message}`;
+    fill($("chatPreview"), el("div", { class: "cap err", text: msg }));
+    return;
+  }
+  if (ticket !== chatState.seq) return;   // 그사이 다른 문장을 보냈음 -- 옛 해석 무시
+  chatState.r = { ...r, entries: r.entries.map((e) => ({ ...e, items: e.items.map((i) => ({ ...i })), target: defaultTarget(e) })) };
+  renderChatPreview();
+}
+function chatReady() {
+  const es = chatState.r?.entries || [];
+  return es.length && es.every((e) => e.slot && e.items.length && e.items.every((i) => !i.unit_mismatch));
+}
+function chatFootState() {
+  const es = chatState.r?.entries || [];
+  const go = $("chatApply"), msg = $("chatMsg");
+  if (!go) return;
+  go.disabled = !chatReady();
+  msg.textContent = es.some((e) => !e.slot) ? "끼니를 골라 주세요."
+    : es.some((e) => !e.items.length) ? "메뉴가 없는 끼니가 있습니다."
+    : es.some((e) => e.items.some((i) => i.unit_mismatch)) ? "단위가 다른 메뉴의 수량을 기준 단위로 고쳐 주세요 (예: 피자 3조각 ≈ 라지 0.4판)." : "";
+}
+function renderChatPreview() {
+  const r = chatState.r;
+  const foot = el("div", { class: "chatpv-foot" });
+  if (!r.entries.length) {
+    fill($("chatPreview"), el("div", { class: "cap muted", text: "먹은 내용을 찾지 못했습니다. 예: 오늘 점심에 김밥 한 줄" }));
+    return;
+  }
+  const rows = r.entries.map((e) => {
+    const slot = el("select", { "aria-label": "끼니" }, el("option", { value: "", text: "끼니 선택" }),
+                    ...SLOTS.map((s) => el("option", { value: s, text: s })));
+    slot.value = e.slot || "";
+    slot.onchange = () => { e.slot = slot.value || null; e.target = defaultTarget(e); renderChatPreview(); };
+    const chips = e.items.map((it, i) => {
+      const m = menuOf(it.name);
+      const qty = el("input", { type: "number", min: "0.1", max: "20", step: "0.1", value: String(it.qty), "aria-label": `${it.name} 수량` });
+      const kcalSpan = el("span", { class: "cap muted num" });
+      const badge = it.unit_mismatch ? el("span", { class: "badge b-warn", text: `단위 확인: 말한 단위 '${it.said_unit}' · 기준 '${m.unit}'` }) : null;
+      const showKcal = () => { kcalSpan.textContent = !m ? "kcal 모름" : it.unit_mismatch ? "" : `${kc(m.low * it.qty)}–${kc(m.high * it.qty)} kcal`; };
+      showKcal();
+      // 수량은 미리보기를 다시 그리지 않고 이 칩만 고친다 -- 다시 그리면 바로 누른 [넣기]가 사라져 클릭이 먹히지 않았다 (2026-11-15)
+      qty.oninput = () => {
+        const v = Number(qty.value);
+        if (!(v > 0 && v <= 20)) return;
+        it.qty = v;
+        it.unit_mismatch = false;
+        badge?.remove();
+        showKcal();
+        chatFootState();
+      };
+      const x = el("button", { class: "x", "aria-label": `${it.name} 빼기`, text: "×" });
+      x.onclick = () => { e.items.splice(i, 1); renderChatPreview(); };
+      return el("span", { class: "chip" }, it.name, qty, el("span", { class: "cap muted", text: m ? `× ${m.unit}` : (it.said_unit || "") }),
+        m ? kcalSpan : kcalButton(it.name, it.said_unit ? `1${it.said_unit}` : "", () => chatState.r && renderChatPreview()), badge, x);
+    });
+    const cands = e.fill_candidates.filter((c) => c.slot === e.slot);
+    let target;
+    if (cands.length) {
+      target = el("select", { "aria-label": "넣을 곳" }, ...cands.map((c) => el("option", { value: String(c.id),
+        text: `이 결제에 채우기: ${c.place} ${c.time || ""} · ${won.format(c.amount)}원` })), el("option", { value: "new", text: "새 끼니로 넣기" }));
+      target.value = e.target;
+      target.onchange = () => { e.target = target.value; };
+    } else {
+      target = el("span", { class: "cap muted", text: "새 끼니로 넣기" });
+    }
+    return el("div", { class: "chatpv-ent" }, el("span", { class: "when", text: `${md(e.date)}(${dow(e.date)})` }), slot, ...chips,
+      e.items.length ? null : el("span", { class: "cap err", text: "메뉴가 없습니다" }), el("span", { class: "grow" }), target);
+  });
+  const go = el("button", { class: "primary", id: "chatApply", text: r.entries.length > 1 ? `${r.entries.length}끼 넣기` : "넣기" });
+  go.onclick = chatApply;
+  const cancel = el("button", { text: "취소" });
+  cancel.onclick = () => { chatState.r = null; fill($("chatPreview")); $("chatInput").focus(); };
+  foot.append(go, cancel, el("span", { class: "cap err", id: "chatMsg" }), el("span", { class: "grow" }));
+  if (r.loose) {
+    foot.append(el("span", { class: "cap muted", text: "로컬 LLM이 꺼져 있어 규칙으로만 해석함 · 맞는지 확인해 주세요" }));
+  } else if (r.via === "rules") {
+    const again = el("button", { class: "link cap", text: "LLM으로 다시 해석" , title: "해석이 틀렸으면 로컬 LLM에 맡깁니다 (5~10초)" });
+    again.onclick = () => chatParse(true);
+    foot.append(el("span", { class: "cap muted", text: "규칙으로 해석함" }), again);
+  } else {
+    foot.append(el("span", { class: "cap muted", text: `로컬 LLM으로 해석함 · ${r.seconds}초 · 맞는지 확인해 주세요` }));
+  }
+  fill($("chatPreview"), ...rows, foot);
+  chatFootState();
+  if (!go.disabled) go.focus();   // Enter 한 번 더 = 넣기
+}
+async function chatApply() {
+  const r = chatState.r;
+  if (!chatReady()) return;
+  $("chatApply").disabled = true;
+  const undos = [];
+  try {
+    for (const e of r.entries) {
+      const items = e.items.map((i) => ({ name: i.name, qty: i.qty }));
+      if (e.target !== "new") {
+        await api(`/api/meals/${e.target}`, { method: "PUT", json: { items } });
+        undos.push(() => api(`/api/meals/${e.target}`, { method: "PUT", json: { items: [], confirmed: false } }));
+      } else {
+        const res = await api("/api/meals", { method: "POST", json: { date: e.date, slot: e.slot, items } });
+        undos.push(() => api(`/api/meals/${res.id}`, { method: "DELETE" }));
+      }
+    }
+  } catch (err) {
+    await refresh();
+    say(`일부만 넣었습니다 (${undos.length}/${r.entries.length}끼): ${err.message}`, { error: true,
+      undo: undos.length ? async () => { for (const u of undos.reverse()) await u(); } : null });
+    return;
+  }
+  const filled = r.entries.filter((e) => e.target !== "new").length;
+  chatState.r = null;
+  fill($("chatPreview"));
+  $("chatInput").value = "";
+  await selectDay(r.entries[0].date);
+  await refresh();
+  say(`${r.entries.map((e) => `${md(e.date)} ${e.slot} ${e.items.map((i) => i.name).join("·")}`).join(", ")}을(를) 넣었습니다` +
+      (filled ? ` (카드 결제 ${filled}건에 채움)` : "") + ".", { undo: async () => { for (const u of undos.reverse()) await u(); } });
+  $("chatInput").focus();
+}
+$("chatGo").onclick = () => chatParse();
+$("chatInput").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { chatState.r = null; fill($("chatPreview")); return; }
+  if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  if (e.isComposing || e.keyCode === 229) return;   // 한글 조합 중 Enter는 글자 확정 -- 해석하지 않는다
+  chatParse();
+});
+
+// ------------------------------------------------------------------ 영수증·캡처 올리기
+// 올리기 -> OCR(서버) -> 읽은 결과 확인·수정 -> [확정]: 짝지은 카드 결제 끼니에 메뉴(+가게 이름)를 채우거나 새 끼니로
+const caps = { seq: 0, list: [], edit: {}, note: null };
+const KIND_WORD = { delivery: "배달 영수증", paper: "종이 영수증", label: "영양정보 라벨" };
+function capEdit(v) {   // 화면에서 고친 값 (다시 불러와도 유지)
+  if (!caps.edit[v.id]) {
+    caps.edit[v.id] = { store: v.store || "", items: v.items.map((i) => ({ name: i.name, qty: i.qty, read: i.read_name, price: i.price, option: i.option, compose: i.compose })),
+      target: v.candidates[0] ? String(v.candidates[0].id) : "new", date: v.date || today(), slot: v.guess_slot || "" };
+  }
+  return caps.edit[v.id];
+}
+async function loadCaptures() {
+  const ticket = ++caps.seq;
+  let list;
+  try { list = await api("/api/captures"); } catch (_) { return; }
+  if (ticket !== caps.seq) return;
+  caps.list = list;
+  renderCaptures();
+}
+// A2A 결과의 확인 링크(#capture=<id>)로 열었으면 그 캡처로
+function focusCaptureFromHash() {
+  const m = /^#capture=([0-9a-f]{24})$/.exec(location.hash);
+  if (!m) return;
+  const card = document.querySelector(`#capArea .capcard[data-id="${m[1]}"]`);
+  for (const x of document.querySelectorAll("#capArea .capcard.focus")) x.classList.remove("focus");
+  if (card) { card.classList.add("focus"); card.scrollIntoView({ block: "center" }); }
+  else say("이 캡처는 이미 확정했거나 치웠습니다.");
+}
+function renderCaptures() {
+  const parts = [];
+  if (caps.note) parts.push(caps.note);
+  if (caps.list.length) parts.push(el("div", { class: "cap muted", text: `확인할 캡처 ${caps.list.length}장 — 읽은 내용을 고친 뒤 [확정]하면 끼니에 반영됩니다.` }));
+  parts.push(...caps.list.map(capCard));
+  fill($("capArea"), ...parts);
+  if (location.hash.startsWith("#capture=")) document.querySelector(`#capArea .capcard[data-id="${location.hash.slice(9)}"]`)?.classList.add("focus");
+}
+function labelCard(v) {
+  // 포장 식품 영양정보: 제품명·총 내용량·kcal -> 내 메뉴 (출처 포장지 영양정보, 가장 정확)
+  const lab = v.label;
+  const e = caps.edit[v.id] || (caps.edit[v.id] = { name: lab.name || "" });
+  const thumb = el("img", { src: `/api/captures/${v.id}/image`, alt: `${v.filename} 원본`, title: "누르면 원본을 새 창으로" });
+  thumb.onclick = () => window.open(`/api/captures/${v.id}/image`, "_blank");
+  const nameIn = el("input", { type: "text", value: e.name, maxlength: "30", placeholder: "제품 이름", "aria-label": "제품 이름" });
+  nameIn.oninput = () => { e.name = nameIn.value; };
+  const unit = lab.weight ? `1팩(${won.format(lab.weight)}${lab.unit})` : "1팩";
+  const facts = lab.kcal != null ? `${unit} = ${kc(lab.kcal)} kcal` : "kcal를 못 읽었습니다";
+  const ok = el("button", { class: "primary", text: "내 메뉴로 저장" });
+  ok.disabled = lab.kcal == null;
+  ok.onclick = async () => {
+    const name = e.name.trim();
+    if (!name) { say("제품 이름을 넣어 주세요.", { error: true }); return; }
+    let r;
+    try {
+      r = await api(`/api/menus/${encodeURIComponent(name)}`, { method: "PUT", json: { unit, low: lab.kcal, mid: lab.kcal, high: lab.kcal,
+        source: "label", basis: `포장지 영양정보: 총 내용량 ${lab.weight ?? "?"}${lab.unit} ${kc(lab.kcal)}kcal` } });
+      await api(`/api/captures/${v.id}/status`, { method: "PUT", json: { status: "confirmed" } });
+    } catch (err) {
+      say(err.status === 409 ? `'${name}'은(는) 기준표에 이미 있는 이름입니다. 제품 이름을 조금 다르게 적어 주세요 (예: 상표 붙이기).`
+                             : `저장하지 못했습니다: ${err.message}`, { error: true });
+      return;
+    }
+    delete caps.edit[v.id];
+    await reloadMenus(); await loadCaptures(); await refresh();
+    say(`${name}(${unit} ${kc(lab.kcal)} kcal)을(를) 내 메뉴에 저장했습니다. '먹은 것 적기'에 "${name}랑 양파 하나"처럼 적으면 됩니다.`, { undo: async () => {
+      if (r.previous) await api(`/api/menus/${encodeURIComponent(name)}`, { method: "PUT", json: { unit: r.previous.unit, low: r.previous.low,
+        mid: r.previous.mid, high: r.previous.high, source: r.previous.source, basis: r.previous.basis } });
+      else await api(`/api/menus/${encodeURIComponent(name)}`, { method: "DELETE" });
+      await api(`/api/captures/${v.id}/status`, { method: "PUT", json: { status: "read" } });
+      await reloadMenus(); await loadCaptures();
+    } });
+  };
+  const dismiss = el("button", { text: "치우기" });
+  dismiss.onclick = () => setCaptureStatus(v, "dismissed", "캡처를 치웠습니다.");
+  const raw = el("details", {}, el("summary", { class: "cap muted", text: "읽은 글자 보기" }), el("pre", { text: v.text || "(읽은 글자 없음)" }));
+  return el("div", { class: "capcard", "data-id": v.id }, thumb,
+    el("div", { class: "body" },
+      el("div", { class: "row" }, el("span", { class: "badge b-info", text: KIND_WORD.label }),
+        v.origin === "a2a" ? el("span", { class: "badge b-mute", text: "A2A", title: "다른 에이전트가 A2A로 보낸 캡처" }) : null,
+        nameIn, el("span", { class: "cap num", text: facts })),
+      lab.exists ? el("div", { class: "cap muted", text: "같은 이름의 메뉴가 이미 있습니다. 저장하면 내 메뉴 값을 이 값으로 바꿉니다 (기준표 이름이면 저장되지 않음)." }) : null,
+      el("div", { class: "cap muted", text: "포장지에 적힌 값이라 kcal가 가장 정확합니다. 저장하면 채팅·메뉴 검색에서 이 제품을 쓸 수 있습니다." }),
+      el("div", { class: "row" }, ok, dismiss, el("span", { class: "grow" })), raw));
+}
+function capCard(v) {
+  if (v.kind === "label") return labelCard(v);
+  const e = capEdit(v);
+  const thumb = el("img", { src: `/api/captures/${v.id}/image`, alt: `${v.filename} 원본`, title: "누르면 원본을 새 창으로" });
+  thumb.onclick = () => window.open(`/api/captures/${v.id}/image`, "_blank");
+  const storeIn = el("input", { type: "text", value: e.store, maxlength: "60", placeholder: "가게 이름", "aria-label": "가게 이름" });
+  storeIn.oninput = () => { e.store = storeIn.value; };
+  const money = v.total != null ? `${won.format(v.total)}원`
+    : v.total_guess != null ? `결제금액 못 읽음 → 메뉴 ${won.format(v.menu_total)}` + (v.tip ? ` + 배달팁 ${won.format(v.tip)}` : "") +
+                              (v.discount ? ` − 할인 ${won.format(v.discount)}` : "") + ` = ${won.format(v.total_guess)}원으로 찾음`
+    : "결제금액 못 읽음";
+  const facts = [v.date ? `${md(v.date)}(${dow(v.date)})` : "날짜 못 읽음", v.time || "", money]
+    .filter(Boolean).join(" · ") + (v.fixed_date ? " (적힌 요일에 맞춰 날짜를 바로잡음)" : "");
+  const chips = e.items.map((it, i) => {
+    const m = menuOf(it.name);
+    const nm = el("button", { class: "nm", text: it.name, title: it.read !== it.name ? `읽은 이름: ${it.read || ""} · 눌러서 메뉴 바꾸기` : "눌러서 메뉴 바꾸기" });
+    nm.onclick = () => openPicker(nm, (name) => { it.name = name; renderCaptures(); });
+    const qty = el("input", { type: "number", min: "0.1", max: "20", step: "0.1", value: String(it.qty), "aria-label": `${it.name} 수량` });
+    const kspan = el("span", { class: "cap muted num" });
+    const show = () => { kspan.textContent = m ? `${kc(m.low * it.qty)}–${kc(m.high * it.qty)} kcal` : ""; };
+    show();
+    qty.oninput = () => { const q = Number(qty.value); if (q > 0 && q <= 20) { it.qty = q; show(); } };
+    const x = el("button", { class: "x", "aria-label": `${it.name} 빼기`, text: "×" });
+    x.onclick = () => { e.items.splice(i, 1); renderCaptures(); };
+    return el("span", { class: "chip" }, nm, qty, m ? kspan : kcalButton(it.name, "1인분", renderCaptures, it.compose),
+      it.option ? el("span", { class: "badge b-mute", text: "곁들임", title: "옵션 줄에서 읽은 추가 음식 -- 안 먹었으면 빼세요" }) : null,
+      it.price != null ? el("span", { class: "cap muted num", text: `${won.format(it.price)}원` }) : null, x);
+  });
+  const add = el("button", { class: "link", text: "+ 메뉴 추가" });
+  add.onclick = () => openPicker(add, (name) => { e.items.push({ name, qty: 1, read: null, price: null }); renderCaptures(); });
+  const target = el("select", { "aria-label": "넣을 곳" }, ...v.candidates.map((c) => el("option", { value: String(c.id),
+    text: `이 결제에 채우기: ${c.place} ${md(c.pay_date)} ${c.time || ""} · ${won.format(c.amount)}원${c.exact ? "" : " (할인됐다면)"}${c.items.length ? ` (지금 메뉴: ${c.items.join("·")})` : ""}` })),
+    el("option", { value: "new", text: "새 끼니로 넣기" }));
+  target.value = e.target;
+  target.onchange = () => { e.target = target.value; renderCaptures(); };
+  let newFields = null;
+  if (e.target === "new") {
+    const d = el("input", { type: "date", value: e.date, "aria-label": "날짜" });
+    d.onchange = () => { e.date = d.value; };
+    const s = el("select", { "aria-label": "끼니" }, el("option", { value: "", text: "끼니 선택" }), ...SLOTS.map((x) => el("option", { value: x, text: x })));
+    s.value = e.slot;
+    s.onchange = () => { e.slot = s.value; renderCaptures(); };
+    newFields = el("span", { class: "row" }, d, s);
+  }
+  const why = !e.items.length ? "메뉴가 없습니다." : e.target === "new" && !e.slot ? "끼니를 골라 주세요." : "";
+  const ok = el("button", { class: "primary", text: "확정" });
+  ok.disabled = !!why;
+  ok.onclick = () => confirmCapture(v, e, ok);
+  const dismiss = el("button", { text: "치우기", title: "이 캡처는 반영하지 않음 (되돌릴 수 있음)" });
+  dismiss.onclick = () => setCaptureStatus(v, "dismissed", "캡처를 치웠습니다.");
+  const notes = [];
+  if (!v.candidates.length) notes.push(v.total == null || !v.date ? "결제금액·날짜를 못 읽어 짝지을 카드 결제를 찾지 못했습니다. 새 끼니로 넣거나 치우세요."
+    : "금액·날짜가 맞는 카드 결제가 없습니다 (현금·다른 카드일 수 있음). 새 끼니로 넣을 수 있습니다.");
+  else if (!v.date) notes.push(`날짜를 못 읽어 금액이 맞는 배달 결제 ${v.candidates.length}건을 최근 순으로 보여 드립니다. 주문한 날의 결제를 골라 주세요.`);
+  else if (v.candidates.length > 1) notes.push(`금액이 같은 결제가 ${v.candidates.length}건입니다. 맞는 결제를 골라 주세요.`);
+  const raw = el("details", {}, el("summary", { class: "cap muted", text: "읽은 글자 보기" }), el("pre", { text: v.text || "(읽은 글자 없음)" }));
+  return el("div", { class: "capcard", "data-id": v.id }, thumb,
+    el("div", { class: "body" },
+      el("div", { class: "row" }, el("span", { class: "badge b-info", text: KIND_WORD[v.kind] }),
+        v.origin === "a2a" ? el("span", { class: "badge b-mute", text: "A2A", title: "다른 에이전트가 A2A로 보낸 캡처" }) : null,
+        storeIn, el("span", { class: "cap muted num", text: facts })),
+      el("div", { class: "chips" }, ...chips, add),
+      el("div", { class: "row cap" }, el("span", { class: "muted", text: "넣을 곳" }), target, newFields),
+      ...notes.map((n) => el("div", { class: "cap muted", text: n })),
+      el("div", { class: "row" }, ok, dismiss, why ? el("span", { class: "cap err", text: why }) : null, el("span", { class: "grow" })),
+      raw));
+}
+async function confirmCapture(v, e, btn) {
+  btn.disabled = true;
+  const items = e.items.map((i) => ({ name: i.name, qty: i.qty }));
+  let r;
+  try {
+    r = await api(`/api/captures/${v.id}/confirm`, { method: "POST", json: { target: e.target, date: e.target === "new" ? e.date : null,
+      slot: e.target === "new" ? e.slot : null, store: e.store || null, items } });
+  } catch (err) { btn.disabled = false; say(`확정하지 못했습니다: ${err.message}`, { error: true }); return; }
+  delete caps.edit[v.id];
+  caps.note = null;
+  await loadCaptures();
+  const meal = (await api(`/api/meals`)).find((m) => m.id === r.meal_id);
+  if (meal) await selectDay(meal.date);
+  await refresh();
+  say(e.target === "new" ? `영수증으로 새 끼니를 넣었습니다 (${items.map((i) => i.name).join("·")}).`
+                         : `카드 결제에 영수증 메뉴를 채웠습니다 (${e.store || "가게"} · ${items.map((i) => i.name).join("·")}).`, { undo: async () => {
+    if (r.previous) await api(`/api/meals/${r.meal_id}`, { method: "PUT", json: { items: r.previous.items, store: r.previous.store,
+                                                                                    confirmed: r.previous.confirmed } });
+    else await api(`/api/meals/${r.meal_id}`, { method: "DELETE" });
+    await api(`/api/captures/${v.id}/status`, { method: "PUT", json: { status: "read" } });
+    await loadCaptures();
+  } });
+}
+async function setCaptureStatus(v, status, msg) {
+  try { await api(`/api/captures/${v.id}/status`, { method: "PUT", json: { status } }); }
+  catch (err) { say(`바꾸지 못했습니다: ${err.message}`, { error: true }); return; }
+  await loadCaptures();
+  say(msg, { undo: async () => { await api(`/api/captures/${v.id}/status`, { method: "PUT", json: { status: "read" } }); await loadCaptures(); } });
+}
+async function uploadCaptures(files) {
+  files = [...files].filter((f) => f.type.startsWith("image/") || /\.(png|jpe?g|webp|heic|bmp|gif)$/i.test(f.name));
+  if (!files.length) { caps.note = el("div", { class: "cap err", text: "이미지 파일만 올릴 수 있습니다 (png·jpg 등)." }); renderCaptures(); return; }
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f, f.name);
+  caps.note = el("div", { class: "cap muted", text: `${files.length}장 읽는 중… (첫 장은 10초쯤 걸릴 수 있음)` });
+  renderCaptures();
+  $("capBtn").disabled = true;
+  let r;
+  try { r = await api("/api/captures", { method: "POST", body: fd }); }
+  catch (err) {
+    $("capBtn").disabled = false;
+    caps.note = el("div", { class: "cap err" }, err.kind === "ocr_down"
+      ? el("span", {}, "OCR 서버가 꺼져 있어 읽지 못했습니다. meal_log 폴더에서 ", el("code", { text: "bash ../doc_reader/doc_parser/tools/ocr.sh start" }), "로 켠 뒤 다시 올려 주세요.")
+      : `올리지 못했습니다: ${err.message}`);
+    renderCaptures();
+    return;
+  }
+  $("capBtn").disabled = false;
+  const dupDone = r.captures.filter((v) => v.duplicate && v.status !== "read");
+  const msgs = [];
+  const fresh = r.captures.filter((v) => !v.duplicate).length;
+  if (fresh) msgs.push(`${fresh}장을 읽었습니다.`);
+  if (r.captures.some((v) => v.duplicate)) msgs.push(`이미 올린 이미지 ${r.captures.filter((v) => v.duplicate).length}장은 다시 읽지 않았습니다` +
+    (dupDone.length ? ` (${dupDone.length}장은 이미 확정·치움)` : "") + ".");
+  for (const er of r.errors) msgs.push(`${er.filename}: ${er.message}`);
+  caps.note = el("div", { class: "cap" + (r.errors.length ? " err" : " muted"), text: msgs.join(" ") });
+  await loadCaptures();
+}
+$("capBtn").onclick = () => $("capFile").click();
+$("capFile").onchange = () => { if ($("capFile").files.length) uploadCaptures($("capFile").files); $("capFile").value = ""; };
+for (const ev of ["dragenter", "dragover"]) $("chatPanel").addEventListener(ev, (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); $("chatPanel").classList.add("drag"); } });
+for (const ev of ["dragleave", "drop"]) $("chatPanel").addEventListener(ev, () => $("chatPanel").classList.remove("drag"));
+$("chatPanel").addEventListener("drop", (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); uploadCaptures(e.dataTransfer.files); } });
+
+
+// ------------------------------------------------------------------ 오른쪽 칸 탭 · 대화 도우미 (세션 2종: 로컬 LLM / Claude Code)
+// 대화는 서버(SQLite)에 남고, 도우미가 기록·수정한 날은 캘린더에 초록 테두리로 표시한 뒤 화면 전체를 다시 불러온다.
+const TOOL_WORD = { query_meals: "기록 조회", log_meal: "기록", update_meal: "고치기", menu_info: "메뉴 kcal 확인",
+                    save_menu: "내 메뉴 저장", weekly: "주별 추이", pending_meals: "확인할 끼니" };
+const BACKEND_WORD = { local: "로컬 LLM", claude: "Claude Code" };
+const conv = { backends: [], list: [], cur: null, pick: null, busy: false, ctrl: null, touched: new Set(), seq: 0 };
+
+function storeGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+function storeSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+
+function showTab(name) {
+  const day = name === "day";
+  for (const [tab, view, on] of [["tabDay", "dayView", day], ["tabConv", "convView", !day]]) {
+    $(tab).setAttribute("aria-selected", String(on));
+    $(tab).tabIndex = on ? 0 : -1;
+    $(view).hidden = !on;
+  }
+  if (!day) $("tabConv").querySelector(".dot")?.remove();
+  storeSet("meal_log.tab", name);
+}
+$("tabDay").onclick = () => showTab("day");
+$("tabConv").onclick = () => { showTab("conv"); if (!$("askInput").disabled) $("askInput").focus(); };
+for (const id of ["tabDay", "tabConv"]) $(id).addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const next = id === "tabDay" ? "tabConv" : "tabDay";
+  $(next).click(); $(next).focus();
+});
+
+async function initConv() {
+  try { [conv.backends, conv.list] = await Promise.all([api("/api/assistant/backends"), api("/api/conversations")]); }
+  catch (e) { fill($("msgs"), el("div", { class: "err cap", text: `대화를 불러오지 못했습니다: ${e.message}` })); return; }
+  if (storeGet("meal_log.tab") === "conv") showTab("conv");
+  const last = storeGet("meal_log.conv");
+  const pick = conv.list.find((c) => c.id === last) || conv.list[0];
+  if (pick) await openConv(pick.id); else renderConv();
+}
+async function openConv(id) {
+  const ticket = ++conv.seq;
+  let c;
+  try { c = await api(`/api/conversations/${id}`); }
+  catch (e) { if (ticket === conv.seq) fill($("msgs"), el("div", { class: "err cap", text: `대화를 열지 못했습니다: ${e.message}` })); return; }
+  if (ticket !== conv.seq) return;   // 그사이 다른 대화를 골랐음
+  conv.cur = c;
+  storeSet("meal_log.conv", id);
+  renderConv();
+}
+function backendBadge(id) {
+  return el("span", { class: "badge " + (id === "claude" ? "b-claude" : "b-info"), text: BACKEND_WORD[id] || id });
+}
+function renderConvSel() {
+  const sel = $("convSel");
+  const opts = conv.list.map((c) => {
+    const o = el("option", { value: c.id, text: `${c.title} · ${BACKEND_WORD[c.backend]} · ${syncTime(c.updated_at)}` });
+    if (conv.cur && c.id === conv.cur.id) o.selected = true;
+    return o;
+  });
+  fill(sel, ...(opts.length ? opts : [el("option", { value: "", text: "대화 없음" })]));
+  sel.disabled = !opts.length || conv.busy;
+  $("convDel").hidden = !conv.cur;
+  $("convDel").disabled = conv.busy;
+  $("convNewBtn").disabled = conv.busy;
+}
+function renderConv() {
+  renderConvSel();
+  const c = conv.cur;
+  const b = c && conv.backends.find((x) => x.id === c.backend);
+  if (!c) {
+    $("convHead").replaceChildren();
+    const anyOn = conv.backends.some((x) => x.available);
+    const start = el("button", { class: "primary", text: "새 대화 시작" });
+    start.onclick = openNewConv;
+    fill($("msgs"), el("div", { class: "convempty muted" },
+      el("div", { text: "말로 시키면 먹은 것을 기록하고, 고치고, 지난 식단을 찾아 줍니다." }),
+      el("div", { class: "cap", text: "예: \"어제 저녁 배달은 치킨 반 마리, 둘이 먹었어\" · \"이번 주 야식 몇 번?\"" }),
+      el("div", { style: "margin-top:10px" }, start),
+      anyOn ? null : el("div", { class: "cap err", style: "margin-top:8px", text: "지금 쓸 수 있는 세션이 없습니다. [새 대화]에서 켜는 법을 확인하세요." })));
+    setAsk(false, "먼저 새 대화를 시작하세요");
+    return;
+  }
+  fill($("convHead"), backendBadge(c.backend),
+       el("span", { text: c.backend === "claude" ? "식단만 Anthropic으로 나감 · 결제 금액·가게·카드 정보는 보내지 않음" : "이 PC 안에서만 처리" }),
+       b && !b.available ? el("span", { class: "err", text: `지금 쓸 수 없음: ${b.reason}` }) : null);
+  const rows = c.messages.map((m) => m.role === "user" ? userBubble(m.text) : answerBubble(m));
+  fill($("msgs"), ...(rows.length ? rows : [el("div", { class: "convempty muted cap", text: "먹은 것·고칠 것·궁금한 것을 말해 보세요." })]));
+  $("msgs").scrollTop = $("msgs").scrollHeight;
+  setAsk(b ? b.available : false, b && !b.available ? b.reason : "");
+}
+function setAsk(on, why) {
+  const ready = on && !conv.busy;
+  $("askInput").disabled = !on;
+  $("askGo").disabled = !ready;
+  $("askInput").title = why || "";
+  $("askGo").hidden = conv.busy;
+  $("askStop").hidden = !conv.busy;
+}
+function userBubble(text) { return el("div", { class: "msg-u", text }); }
+// 지침은 링크를 쓰지 말라고 하지만 모델이 쓰면: [글자](/#날짜)·/#날짜는 그날 버튼으로, 날짜 없는 [글자](…)는 지운다
+// (실제 Qwen 점검 2026-11-15: "[확인하기](/#2026-11-15)", "[확인하기](review_url)")
+function linkify(text) {
+  const out = [];
+  text = text.replace(/\[[^\]\n]{1,20}\]\((\/?#\d{4}-\d{2}-\d{2})\)/g, "$1").replace(/\s*\[[^\]\n]{1,20}\]\((?!\/?#\d)[^)\s]{0,40}\)/g, "");
+  for (const part of text.split(/(\/?#\d{4}-\d{2}-\d{2})/)) {
+    const m = /^\/?#(\d{4}-\d{2}-\d{2})$/.exec(part);
+    if (m) { const a = el("button", { class: "link", text: `${md(m[1])}(${dow(m[1])}) 보기` }); a.onclick = () => selectDay(m[1]); out.push(a); }
+    else if (part) out.push(part);
+  }
+  return out;
+}
+function toolCard(ev) {
+  const card = el("div", { class: "toolcard" + (ev.ok ? "" : " bad") }, el("span", { text: ev.summary }));
+  for (const d of [...new Set(ev.dates || [])].slice(0, 3)) {
+    const v = el("button", { class: "link", text: `${md(d)} 보기` });
+    v.onclick = () => selectDay(d);
+    card.append(v);
+  }
+  return card;
+}
+function answerBubble(m) {
+  const failed = m.events.some((e) => e.name === "error");
+  return el("div", { class: "msg-a" + (failed ? " fail" : "") },
+    ...m.events.map((e) => toolCard(e)),
+    m.text ? el("div", {}, ...linkify(m.text)) : null,
+    m.cost ? el("div", { class: "foot", text: `이번 답 비용 $${m.cost.toFixed(3)}` }) : null);
+}
+
+// 새 대화: 세션 고르기 (기본 로컬 LLM, 꺼진 쪽은 잠그고 켜는 법)
+function openNewConv() {
+  const on = conv.backends.filter((b) => b.available);
+  if (!conv.pick || !on.some((b) => b.id === conv.pick)) conv.pick = on.some((b) => b.id === "local") ? "local" : on[0]?.id || null;
+  renderChoices();
+  $("convNew").hidden = false;
+  $("convNewMsg").textContent = "";
+  $("convChoices").querySelector("[aria-checked=true]")?.focus();
+}
+function renderChoices() {
+  fill($("convChoices"), ...conv.backends.map((b) => {
+    const btn = el("button", { class: "choice" + (b.sends_out ? " sends" : ""), role: "radio", "aria-checked": String(b.id === conv.pick) },
+      el("span", { class: "mark", "aria-hidden": "true" }),
+      el("b", { text: b.label + (b.id === "local" ? " (기본)" : "") }),
+      el("span", { class: "why", text: b.available ? b.notice : `쓸 수 없음 — ${b.reason}` }));
+    btn.disabled = !b.available;
+    btn.onclick = () => { conv.pick = b.id; renderChoices(); $("convChoices").querySelector("[aria-checked=true]").focus(); };
+    return btn;
+  }));
+  $("convCreate").disabled = !conv.pick;
+}
+$("convNewBtn").onclick = async () => {
+  try { conv.backends = await api("/api/assistant/backends"); } catch (_) {}   // 그사이 켜졌을 수 있음
+  openNewConv();
+};
+$("convCancel").onclick = () => { $("convNew").hidden = true; };
+$("convCreate").onclick = async () => {
+  $("convCreate").disabled = true;
+  let c;
+  try { c = await api("/api/conversations", { method: "POST", json: { backend: conv.pick } }); }
+  catch (e) { $("convNewMsg").className = "cap err"; $("convNewMsg").textContent = e.message; $("convCreate").disabled = false; return; }
+  $("convNew").hidden = true;
+  conv.list = [c, ...conv.list];
+  await openConv(c.id);
+  $("askInput").focus();
+};
+$("convSel").onchange = () => { if ($("convSel").value) openConv($("convSel").value); };
+$("convDel").onclick = async () => {
+  const c = conv.cur;
+  if (!c || !confirm(`대화 "${c.title}"를 지울까요? 대화만 지워지고 식단 기록은 그대로입니다.`)) return;
+  try { await api(`/api/conversations/${c.id}`, { method: "DELETE" }); }
+  catch (e) { say(`지우지 못했습니다: ${e.message}`, { error: true }); return; }
+  conv.list = conv.list.filter((x) => x.id !== c.id);
+  conv.cur = null;
+  if (conv.list[0]) await openConv(conv.list[0].id); else renderConv();
+  say("대화를 지웠습니다.");
+};
+
+// SSE 줄 읽기 (fetch 스트림: POST라 EventSource를 못 씀)
+async function* readEvents(resp) {
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      for (const line of chunk.split("\n")) if (line.startsWith("data: ")) yield JSON.parse(line.slice(6));
+    }
+  }
+}
+async function sendAsk() {
+  const c = conv.cur;
+  const text = $("askInput").value.trim();
+  if (!c || !text || conv.busy) return;
+  conv.busy = true;
+  conv.ctrl = new AbortController();
+  conv.touched.clear();
+  $("msgs").querySelector(".convempty")?.remove();
+  const bubble = el("div", { class: "msg-a" });
+  const body = el("div", { class: "cursor" });
+  bubble.append(body);
+  $("msgs").append(userBubble(text), bubble);
+  $("askInput").value = "";
+  renderConvSel(); setAsk(true);
+  const scroll = () => { $("msgs").scrollTop = $("msgs").scrollHeight; };
+  scroll();
+  let answer = "", running = null, changed = false, failed = false;
+  try {
+    const r = await fetch(`/api/conversations/${c.id}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: conv.ctrl.signal,
+      body: JSON.stringify({ text, today: today() }) });
+    if (!r.ok) throw await apiError(r);
+    for await (const ev of readEvents(r)) {
+      if (ev.type === "text") { answer += ev.text; body.replaceChildren(...linkify(answer)); }
+      else if (ev.type === "tool") {
+        running = el("div", { class: "toolcard run", text: `${TOOL_WORD[ev.name] || ev.name} 하는 중…` });
+        bubble.insertBefore(running, body);
+      } else if (ev.type === "tool_result") {
+        const card = toolCard(ev);
+        if (running) running.replaceWith(card); else bubble.insertBefore(card, body);
+        running = null;
+        if (ev.ok && (ev.dates.length || ev.name === "save_menu")) {
+          for (const d of ev.dates) conv.touched.add(d);
+          changed = true;
+          refresh();   // 기록이 바뀔 때마다 바로 캘린더·고른 날·추이에 반영
+        }
+      } else if (ev.type === "done") {
+        if (ev.cost) bubble.append(el("div", { class: "foot", text: `이번 답 비용 $${ev.cost.toFixed(3)}` }));
+      } else if (ev.type === "error") {
+        failed = true;
+        bubble.classList.add("fail");
+        bubble.insertBefore(el("div", { class: "toolcard bad", text: ev.message }), body);
+      }
+      scroll();
+    }
+  } catch (e) {
+    failed = true;
+    bubble.classList.add("fail");
+    const msg = e.name === "AbortError" ? "멈췄습니다." : e.status === 409 ? "이 대화는 아직 답하는 중입니다. 잠시 뒤 다시 보내 주세요." : `보내지 못했습니다: ${e.message}`;
+    bubble.insertBefore(el("div", { class: "toolcard bad", text: msg }), body);
+    if (e.status !== 409 && e.name !== "AbortError") $("askInput").value = text;   // 못 보낸 말은 되살림
+  } finally {
+    body.classList.remove("cursor");
+    if (!answer && !failed) body.textContent = "(빈 답)";
+    conv.busy = false; conv.ctrl = null;
+    if ($("convView").hidden && !$("tabConv").querySelector(".dot")) $("tabConv").append(el("span", { class: "dot", "aria-label": "새 답" }));
+    try {
+      conv.list = await api("/api/conversations");
+      if (conv.cur?.id === c.id) conv.cur = await api(`/api/conversations/${c.id}`);   // 저장된 모양으로 (재시작해도 같음)
+    } catch (_) {}
+    if (conv.cur?.id === c.id) { renderConvSel(); setAsk(conv.backends.find((x) => x.id === c.backend)?.available ?? false); }
+    if (changed) { await refresh(); }
+    scroll();
+  }
+}
+$("askGo").onclick = sendAsk;
+$("askStop").onclick = () => conv.ctrl?.abort();
+$("askInput").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey) return;
+  if (e.isComposing || e.keyCode === 229) return;   // 한글 조합 중 Enter는 글자 확정
+  e.preventDefault();
+  sendAsk();
+});
+
+// ------------------------------------------------------------------ 전체 다시 그리기·시작
+async function refresh() {
+  await loadStatus().catch(() => {});
+  await Promise.all([loadReview().catch((e) => say(`확인할 끼니를 불러오지 못했습니다: ${e.message}`, { error: true })),
+                     loadCalendar(), loadDay(state.day), state.day ? loadWeekLine(state.day) : null, loadWeekly()]);
+}
+function firstDay() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(h) && !isNaN(parseIso(h))) return h;
+  const r = state.review?.rows?.[0];
+  if (r) return r.date;
+  const t = today();
+  return state.lastDate && state.lastDate < t.slice(0, 8) + "01" ? state.lastDate : t;
+}
+window.addEventListener("hashchange", () => {   // 주소의 #날짜를 직접 바꾸거나 붙여 넣어도 그 날로
+  if (location.hash.startsWith("#capture=")) { loadCaptures().then(focusCaptureFromHash); return; }
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(h) && h !== state.day && !isNaN(parseIso(h))) selectDay(h);
+});
+(async () => {
+  $("chatDate").value = today();
+  try {
+    [state.menus] = await Promise.all([api("/api/menus"), loadStatus(), loadSettings()]);
+    renderMyMenus();   // 설정과 메뉴를 같이 받으므로, 둘 다 온 뒤에 내 메뉴 목록을 그린다
+  } catch (e) { say(`화면을 준비하지 못했습니다: ${e.message}`, { error: true, sticky: true }); return; }
+  syncLabel(state.lastSync ? `가져옴 ${syncTime(state.lastSync)}` : "아직 가져온 적 없음");
+  await sync();               // 열 때마다 최신으로 (매일 열든 주 단위로 열든 같은 흐름)
+  await loadReview().catch(() => null);
+  const day = firstDay();
+  state.month = day.slice(0, 7);
+  const capHash = location.hash.startsWith("#capture=") ? location.hash : null;
+  await Promise.all([loadCalendar(), selectDay(day, { keepTab: true }), loadWeekly(), loadCaptures(), initConv()]);
+  if (capHash) { history.replaceState(null, "", capHash); focusCaptureFromHash(); }   // selectDay가 주소를 #날짜로 바꾸므로 되돌림
+})();
+</script>
+</body>
+</html>

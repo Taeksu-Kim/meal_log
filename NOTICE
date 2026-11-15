@@ -1,0 +1,20 @@
+meal_log
+Copyright 2026 Taeksu Kim
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party software this code depends on (installed separately, not included in this repository):
+
+- doc_reader (Apache-2.0, https://github.com/Taeksu-Kim/doc_reader) — the `doc_parser` package: OCR client and the A2A endpoint.
+  Installing doc_reader also installs PyMuPDF, licensed under AGPL-3.0 or an Artifex commercial license
+  (https://github.com/pymupdf/PyMuPDF). meal_log itself does not call PyMuPDF.
+- basic_agent (MIT, https://github.com/Taeksu-Kim/basic_agent) — OpenAI-compatible client for the local LLM (optional).
+- FastAPI, Starlette, Uvicorn, pydantic, python-multipart, httpx, requests (MIT / BSD / Apache-2.0) — the server.
+- Pillow (MIT-CMU) — image normalization for uploaded captures.
+- Optional: pytest (MIT), Playwright (Apache-2.0) for tests and the browser check; pandas, xlrd (BSD) for the kcal DB tools.
+- Optional external services, run separately: the OCR server from doc_reader (PaddleOCR-VL, Apache-2.0), a local LLM server
+  (vLLM, Apache-2.0) and Claude Code (Anthropic, under its own terms). Model weights are downloaded under their own licenses.
+
+Nutrition reference values: kcal ranges in meal_log/menu_kcal.py and meal_log/compose.py are hand-written estimates or
+values transcribed from the Korean MFDS "전국통합식품영양성분정보 음식 표준데이터" (public data, data.go.kr). The data file
+itself is not included.
